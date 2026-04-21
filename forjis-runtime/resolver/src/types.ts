@@ -28,6 +28,8 @@ export interface BuildConfig {
   personas: PersonasConfig | null;
   /** Optional health check configuration. Null when not configured (defaults apply at runtime). */
   healthCheck: HealthCheckConfig | null;
+  /** Optional inspector configuration. Null when not present. */
+  inspector: InspectorConfig | null;
 }
 
 /** A reference to a plugin by name. */
@@ -146,6 +148,23 @@ export interface PillarEntry {
 export interface PersonasConfig {
   /** Path to the personas directory, relative to the project root. */
   dir: string;
+}
+
+/**
+ * Configuration for the optional `inspector` block in build.forjis.
+ *
+ * Currently exposes a single field: an override for the default clarifier
+ * agent the facilitator spawns when finalizing an Inspector pin batch.
+ * Omitting the override falls back to the bundled
+ * `forjis-inspector` agent shipped inside `@forjis/facilitator`.
+ */
+export interface InspectorConfig {
+  /**
+   * Optional clarifier agent override. When set, treated as either an
+   * absolute path or a path relative to the resolved `.forjis/config/`
+   * directory. When omitted, the bundled default is used.
+   */
+  clarifier?: string;
 }
 
 /** Final resolved constraints ready for serialization. */
@@ -271,6 +290,8 @@ export interface RuntimeConfig {
   resolvedConstraints: ResolvedConstraints;
   /** Health check configuration. Always present; defaults applied when build config omits it. */
   healthCheck: HealthCheckConfig;
+  /** Optional inspector configuration; null when the build file omits the block. */
+  inspector: InspectorConfig | null;
 }
 
 /** A resolved organization in the runtime config. */

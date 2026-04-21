@@ -116,6 +116,8 @@ export { ManifestServiceImpl } from './web-services/manifest-service.js';
 export { InspectorServiceImpl, ConcurrentBatchError } from './web-services/inspector-service.js';
 export type { InspectorServiceOptions } from './web-services/inspector-service.js';
 export { wireInspectorMessagePump } from './web-services/inspector-message-pump.js';
+export { getDefaultClarifierPath, loadClarifierAgent } from './inspector-agent-loader.js';
+export type { ClarifierAgent, ClarifierAgentConfig } from './inspector-agent-loader.js';
 export { RuntimeServiceImpl } from './web-services/runtime-service.js';
 export type { WorkerStateRef } from './web-services/runtime-service.js';
 export { writePipelinePlan, syncPlanFromState, syncBranchesFromState, forcePlanReady, getRunningRole, parsePipelinePlan, PlanRoleNotFoundError } from './web-services/plan-writer.js';

@@ -557,3 +557,88 @@ describe('parseBuildFile — minimal valid file', () => {
     expect(config.plugins).toEqual([]);
   });
 });
+
+// --------------------------------------------------------------------------
+// parseBuildFile — inspector block
+// --------------------------------------------------------------------------
+
+describe('parseBuildFile — inspector block', () => {
+  const baseYaml = [
+    'version: 1',
+    'repositories:',
+    '  - type: git',
+    '    url: "https://a.git"',
+    '    ref: v1',
+  ].join('\n');
+
+  it('returns null inspector when key is absent', () => {
+    const config = parseBuildFile(baseYaml);
+    expect(config.inspector).toBeNull();
+  });
+
+  it('parses inspector.clarifier as a string', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'inspector:',
+      '  clarifier: "my-custom.md"',
+    ].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.inspector).toEqual({ clarifier: 'my-custom.md' });
+  });
+
+  it('returns empty inspector object when clarifier is omitted but block present', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'inspector: {}',
+    ].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.inspector).toEqual({});
+  });
+
+  it('rejects non-string clarifier', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'inspector:',
+      '  clarifier: 42',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect((err as BuildFileValidationError).errors.some(
+        e => e.includes('inspector.clarifier: must be a string')
+      )).toBe(true);
+    }
+  });
+
+  it('rejects unknown key inside inspector', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'inspector:',
+      '  unknown_key: "x"',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect((err as BuildFileValidationError).errors.some(
+        e => e.includes('inspector: unrecognized key "unknown_key"')
+      )).toBe(true);
+    }
+  });
+
+  it('rejects non-object inspector', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'inspector: "not-an-object"',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect((err as BuildFileValidationError).errors.some(
+        e => e.includes('"inspector" must be an object')
+      )).toBe(true);
+    }
+  });
+});

@@ -20,7 +20,7 @@
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
     "./package.json": "./package.json"
   },
-  "files": ["dist"],
+  "files": ["dist", "assets/**/*.md"],
   "scripts": {
     "build": "tsc",
     "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js --forceExit --testTimeout=60000",

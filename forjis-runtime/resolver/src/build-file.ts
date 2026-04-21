@@ -17,6 +17,7 @@ import type {
   BuildConstraintsConfig,
   ConstraintIncludeRef,
   HealthCheckConfig,
+  InspectorConfig,
   MetricDef,
   OrgDef,
   OutcomeConfig,
@@ -83,6 +84,7 @@ export function parseBuildFile(content: string): BuildConfig {
   const constraints = validateConstraints(raw['constraints'], errors);
   const personas = validatePersonas(raw['personas'], errors);
   const healthCheck = validateHealthCheck(raw['health_check'], errors);
+  const inspector = validateInspector(raw['inspector'], errors);
 
   if (errors.length > 0) {
     throw new BuildFileValidationError(errors);
@@ -100,6 +102,7 @@ export function parseBuildFile(content: string): BuildConfig {
     constraints,
     personas,
     healthCheck,
+    inspector,
   };
 }
 
@@ -1009,4 +1012,46 @@ function validateHealthCheck(
   }
 
   return { interval, maxRetries };
+}
+
+/** Recognized keys within the inspector block. */
+const INSPECTOR_KEYS = new Set(['clarifier']);
+
+/**
+ * Validates the optional inspector block in the build file.
+ *
+ * Returns `null` when omitted. When present, accepts a single optional
+ * `clarifier` string field; rejects unknown keys and non-string values.
+ */
+function validateInspector(
+  inspector: unknown,
+  errors: string[]
+): InspectorConfig | null {
+  if (inspector === undefined || inspector === null) {
+    return null;
+  }
+
+  if (typeof inspector !== 'object' || Array.isArray(inspector)) {
+    errors.push('"inspector" must be an object');
+    return null;
+  }
+
+  const raw = inspector as Record<string, unknown>;
+
+  for (const key of Object.keys(raw)) {
+    if (!INSPECTOR_KEYS.has(key)) {
+      errors.push(`inspector: unrecognized key "${key}"`);
+    }
+  }
+
+  if (raw['clarifier'] === undefined) {
+    return {};
+  }
+
+  if (typeof raw['clarifier'] !== 'string') {
+    errors.push('inspector.clarifier: must be a string');
+    return null;
+  }
+
+  return { clarifier: raw['clarifier'] };
 }
