@@ -10,3 +10,5 @@ export * from './services.js';
 export * from './task-id.js';
 export * from './project-icon.js';
 export * from './role-identity.js';
+export * from './inspector-services.js';
+export * from './inspector-types.js';
