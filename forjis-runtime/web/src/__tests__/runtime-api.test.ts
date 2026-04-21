@@ -107,7 +107,7 @@ describe('handleRuntime controller', () => {
     const stub: RuntimeService = {
       async getRuntime() {
         return {
-          version: '0.5.0',
+          version: '0.5.1',
           workers: { busy: 1, max: 3 },
           gitBranch: 'forjis/stage',
         };
@@ -119,7 +119,7 @@ describe('handleRuntime controller', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['Content-Type']).toBe('application/json; charset=utf-8');
     const body = parseBody<RuntimeResponse>(res);
-    expect(body.version).toBe('0.5.0');
+    expect(body.version).toBe('0.5.1');
     expect(body.workers).toEqual({ busy: 1, max: 3 });
     expect(body.gitBranch).toBe('forjis/stage');
     // The "do not invent zero" contract — cost must be absent, not 0, not null.
@@ -134,7 +134,7 @@ describe('handleRuntime controller', () => {
     const stub: RuntimeService = {
       async getRuntime() {
         return {
-          version: '0.5.0',
+          version: '0.5.1',
           workers: { busy: 0, max: 1 },
           cost: { total: 0.42, currency: 'USD' },
           gitBranch: null,

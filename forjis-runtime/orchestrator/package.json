@@ -1,6 +1,6 @@
 {
   "name": "@forjis/orchestrator",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Forjis orchestrator — Claude Code commands and skills for LLM-side pipeline execution",
   "keywords": ["forjis", "claude-code", "commands", "skills"],
   "homepage": "https://github.com/todor-mazgalov/forjis#readme",

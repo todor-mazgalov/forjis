@@ -1,6 +1,6 @@
 {
   "name": "@forjis/cli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Forjis CLI — entry point for the AI-powered software development pipeline",
   "keywords": ["forjis", "cli", "llm-agents", "claude-code", "pipeline"],
   "homepage": "https://github.com/todor-mazgalov/forjis#readme",
@@ -29,7 +29,7 @@
     "prepack": "node -e \"require('fs').copyFileSync('../../README.md','README.md')\""
   },
   "dependencies": {
-    "@forjis/facilitator": "0.5.0"
+    "@forjis/facilitator": "0.5.1"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

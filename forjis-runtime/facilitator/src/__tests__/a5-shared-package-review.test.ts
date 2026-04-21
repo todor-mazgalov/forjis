@@ -43,7 +43,7 @@ describe('Shared package scaffold', () => {
   it('shared/package.json has correct name, version, and type', async () => {
     const pkg = await readJson(join(runtimeRoot, 'shared', 'package.json'));
     expect(pkg['name']).toBe('@forjis/shared');
-    expect(pkg['version']).toBe('0.5.0');
+    expect(pkg['version']).toBe('0.5.1');
     expect(pkg['type']).toBe('module');
   });
 
@@ -362,14 +362,14 @@ describe('Dependency graph correctness', () => {
   it('web depends on @forjis/shared, not @forjis/facilitator', async () => {
     const pkg = await readJson(join(runtimeRoot, 'web', 'package.json'));
     const deps = (pkg['dependencies'] ?? {}) as Record<string, string>;
-    expect(deps['@forjis/shared']).toBe('0.5.0');
+    expect(deps['@forjis/shared']).toBe('0.5.1');
     expect(deps['@forjis/facilitator']).toBeUndefined();
   });
 
   it('facilitator depends on @forjis/shared, not @forjis/web', async () => {
     const pkg = await readJson(join(runtimeRoot, 'facilitator', 'package.json'));
     const deps = (pkg['dependencies'] ?? {}) as Record<string, string>;
-    expect(deps['@forjis/shared']).toBe('0.5.0');
+    expect(deps['@forjis/shared']).toBe('0.5.1');
     expect(deps['@forjis/web']).toBeUndefined();
   });
 

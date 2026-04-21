@@ -14,7 +14,7 @@ import type { PluginDef, PluginLockEntry, PluginLockFile } from '../types.js';
 import type { ResourceRegistry } from '../repo/index.js';
 
 /** The resolver version used in the lock file. */
-const RESOLVER_VERSION = '0.5.0';
+const RESOLVER_VERSION = '0.5.1';
 
 /**
  * Writes .forjis/resolved/plugins.lock.yaml with the resolved state

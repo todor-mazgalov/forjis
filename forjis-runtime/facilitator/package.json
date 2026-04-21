@@ -1,6 +1,6 @@
 {
   "name": "@forjis/facilitator",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Forjis runtime core — task queue, engine abstraction, token budgeting, health monitoring",
   "keywords": ["forjis", "task-queue", "llm-agent", "orchestration"],
   "homepage": "https://github.com/todor-mazgalov/forjis#readme",
@@ -27,9 +27,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@forjis/orchestrator": "0.5.0",
-    "@forjis/resolver": "0.5.0",
-    "@forjis/shared": "0.5.0",
+    "@forjis/orchestrator": "0.5.1",
+    "@forjis/resolver": "0.5.1",
+    "@forjis/shared": "0.5.1",
     "yaml": "^2.7.0"
   },
   "devDependencies": {

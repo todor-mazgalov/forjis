@@ -70,7 +70,7 @@ describe('writePluginLock', () => {
     const content = await readFile(lockPath, 'utf-8');
     const parsed = parseYaml(content) as PluginLockFile;
 
-    expect(parsed.resolverVersion).toBe('0.5.0');
+    expect(parsed.resolverVersion).toBe('0.5.1');
     expect(parsed.resolvedAt).toBeTruthy();
     expect(parsed.plugins).toHaveLength(2);
     expect(parsed.plugins[0].name).toBe('plugin-a');

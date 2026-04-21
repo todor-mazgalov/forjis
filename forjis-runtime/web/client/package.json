@@ -1,6 +1,6 @@
 {
   "name": "@forjis/web-client",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Forjis web dashboard SolidJS client",
   "private": true,
   "type": "module",
