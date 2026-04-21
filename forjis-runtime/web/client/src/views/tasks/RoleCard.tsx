@@ -181,6 +181,8 @@ const ORCHESTRATOR_DISPLAY_NAME = 'Orchestrator';
 export const RoleCard: Component<RoleCardProps> = (props) => {
   const isOrchestrator = (): boolean => props.step.kind === 'orchestrator';
 
+  const isUnresolved = (): boolean => props.step.kind === 'unresolved';
+
   const isSkipped = (): boolean =>
     props.step.status === 'skipped' || props.step.decision === 'skipped';
 
@@ -188,6 +190,7 @@ export const RoleCard: Component<RoleCardProps> = (props) => {
     const parts = [styles.card];
     if (props.selected) parts.push(styles.cardSelected);
     if (isSkipped()) parts.push(styles.cardSkipped);
+    if (isUnresolved()) parts.push(styles.cardUnresolved);
     return parts.join(' ');
   };
 
@@ -259,6 +262,16 @@ export const RoleCard: Component<RoleCardProps> = (props) => {
               <RoleLabel role={props.step.role} team={props.step.team} />
             </Show>
           </span>
+          <Show when={props.step.warning !== undefined}>
+            <span
+              class={styles.warningBadge}
+              title={props.step.warning}
+              aria-label={`Warning: ${props.step.warning}`}
+              role="img"
+            >
+              ⚠
+            </span>
+          </Show>
           <span class={styles.elapsed} aria-label={`elapsed ${elapsed()}`}>
             {elapsed()}
           </span>

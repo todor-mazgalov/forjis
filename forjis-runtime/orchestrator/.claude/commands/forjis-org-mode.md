@@ -407,8 +407,9 @@ roles:
 ```
 
 Rules:
-- Include ALL evaluated roles (both RUN and SKIP) — SKIP roles get `status: skipped`
-- RUN roles start with `status: planned`
+- **Completeness is mandatory.** The `roles:` list MUST include one entry for **every role** defined under the selected team in `orgs.yaml`. No role may be omitted — roles that the weight decision table marked SKIP still appear in the list with `status: skipped` and a `justification:` explaining the skip. Omitting roles (writing only the RUN subset) breaks the dashboard's pipeline view, which relies on seeing the complete team roster. If `orgs.yaml` lists 5 roles for the selected team, `pipeline-state.yaml` MUST have 5 entries under `roles:` — count them before writing.
+- Cross-team roles pulled per Step 3c are additional entries on top of the primary team's full roster.
+- RUN roles start with `status: planned`; SKIP roles get `status: skipped`
 - Roles are listed in pipeline execution order
 - `status` at the top level: `running` while pipeline is active, `done` on completion, `failed` on failure
 - Use the Edit tool to update this file atomically at each stage transition
@@ -416,6 +417,7 @@ Rules:
 - Always include the `branches:` field as an ordered array of branch names. The source branch (`<SOURCE_BRANCH>`) is obtained from the setup agent's report output (the `Source Branch:` line). If setup was skipped (resume), read from the existing `pipeline-state.yaml` branches field. If no branches field exists on resume, determine the parent branch from git history.
 - **Role name format:** Role names in `pipeline-state.yaml` MUST be bare (e.g. `Architect`, `Explorer`). The plugin origin is carried in the separate `plugin:` field — never embedded in the role name. If `orgs.yaml` lists a role with a `plugin:` field, copy that value into this entry's `plugin:` field verbatim.
 - **Cross-team roles:** When Step 3c pulls a role from a team other than the pipeline's primary team, include a per-role `team:` field (and optionally `org:`) on that role entry, set to the team that actually owns the role in `orgs.yaml`. Without this override the facilitator's plan parser will reject the plan because the role does not exist in the primary team. Roles that belong to the primary team MUST omit the `team:` field.
+- **Never include system agents (Setup, etc.) in `roles:`.** The setup step is tracked separately by Step 4; it is not weight-evaluated and is not part of the resolved `orgs.yaml`. Every entry in `roles:` MUST match an `(org, team, role)` triple that exists in `orgs.yaml`. Any role the facilitator cannot resolve is kept in `pipeline-plan.yaml` with a ⚠ warning badge in the dashboard and is dropped from execution — it is a visible bug, not a fatal error, but the dashboard will call it out.
 
 **On resume:** If `pipeline-state.yaml` already exists, update it — do not overwrite.
 Keep completed role statuses (`done`), reset `running` to `planned` if the agent didn't
@@ -486,10 +488,9 @@ After loading, print: `[<RoleName>]: context loaded — <N> skills, <N> hooks`
 it again from the org file.
 
 7. Append the **Load Event Injection** template from
-   `forjis-workflow/SKILL.md` as the final section of the composed prompt
-   (after all constraints). `<SLUG>` is the lowercase team-role slug (e.g.,
-   `dev-explorer`). The orchestrator fills in `<TARGET_PROJECT>`, `<TASK_ID>`,
-   `<ROLE_NAME>`, `<SLUG>`, and `<LOADED_RESOURCES>` with concrete values.
+   `forjis-workflow/SKILL.md` (after all constraints). `<SLUG>` is the lowercase
+   kebab of `<org>-<team>-<role>` (e.g. `forjis-backend-architect`). Fill in
+   `<TARGET_PROJECT>`, `<TASK_ID>`, `<ROLE_NAME>`, `<SLUG>`, `<LOADED_RESOURCES>`.
 
 ## Step 9: Execute
 

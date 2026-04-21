@@ -502,7 +502,7 @@ async function runMainLoop(
         // and let the main body observe the flag at the next checkpoint.
         if (planParseError) return;
         try {
-          await syncPlanFromState(options.projectDir, task.id);
+          await syncPlanFromState(options.projectDir, task.id, configResult.runtimeConfig);
           await syncBranchesFromState(options.projectDir, task.id, queue);
           // Strict parser — validates every step's identity shape and
           // looks up the matching RuntimeRole. Any mismatch means the
@@ -614,7 +614,7 @@ async function runMainLoop(
         console.log(`[tokens]: recorded ${engineResult.usage.inputTokens + engineResult.usage.outputTokens} tokens (total: ${tracker.getTotalTokens()})`);
       }
 
-      const synced = await syncPlanFromState(options.projectDir, task.id).catch(() => false);
+      const synced = await syncPlanFromState(options.projectDir, task.id, configResult.runtimeConfig).catch(() => false);
       await syncBranchesFromState(options.projectDir, task.id, queue).catch(() => {});
       if (!synced) {
         await forcePlanReady(options.projectDir, task.id).catch(() => {});

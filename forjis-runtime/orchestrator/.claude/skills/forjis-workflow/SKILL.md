@@ -375,23 +375,20 @@ and override all above.
 ### Load Event Injection
 
 Appended as the final section of the composed prompt (after all constraints).
-The orchestrator pre-computes `<SLUG>` as the lowercase `<team>-<role>` pair.
-In Fallback mode the team slug is `default` and the role slug is the agent
-stage name (e.g. `explorer`), producing files like `events-default-explorer.jsonl`.
+`<SLUG>` is pre-computed as the lowercase kebab of `<org>-<team>-<role>`
+(non-alphanumerics collapsed to `-`). Use `default` for any missing segment.
+Example: `(forjis, Backend, Architect)` → `forjis-backend-architect`.
 
 ```
 ## Load Event (mandatory first action)
 
-Before doing ANYTHING else, write a load event to record what was loaded for this agent.
-Run this exact Bash command as your very first tool call:
+Before doing ANYTHING else, write a load event. Run this exact Bash command as your very first tool call:
 
 mkdir -p "<TARGET_PROJECT>/.forjis/tasks/<TASK_ID>" && echo '{"timestamp":"<CURRENT_ISO_TIMESTAMP>","type":"load","role":"<ROLE_NAME>","content":"<LOADED_RESOURCES>"}' >> "<TARGET_PROJECT>/.forjis/tasks/<TASK_ID>/events-<SLUG>.jsonl"
 
-Where <LOADED_RESOURCES> is a pipe-separated summary of what was loaded:
-agent: <agent-file> | skills: <skill1, skill2> | hooks: <pre-hooks, validation-hooks> | expertise: <yes/no> | constraints: <mandatory: N, optional: N, task: N>
+<LOADED_RESOURCES> is a pipe-separated summary: agent: <agent-file> | skills: <s1, s2> | hooks: <pre, val> | expertise: <yes/no> | constraints: <mandatory: N, optional: N, task: N>
 
-Replace <CURRENT_ISO_TIMESTAMP> with the actual current ISO-8601 timestamp when you execute.
-This is mandatory. Do not skip this step.
+Mandatory. Use the current ISO-8601 timestamp. Do not skip this step.
 ```
 
 ---

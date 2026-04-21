@@ -41,11 +41,10 @@ constraints have the highest precedence.
 ### Load Event Injection
 
 For every agent invoked in Phases 1-5, append the **Load Event Injection**
-template from `forjis-workflow/SKILL.md` as the final section of the composed
-prompt. In Fallback mode, `<SLUG>` resolves to `default-<STAGE>` where
-`<STAGE>` is the agent stage name (`setup`, `explorer`, `analyst`, `architect`,
-`developer`, `reviewer`, `finish`), producing files like
-`events-default-explorer.jsonl`.
+template from `forjis-workflow/SKILL.md`. `<SLUG>` is `default-default-<STAGE>`
+(org and team both `default`; stage is `setup`, `explorer`, `analyst`,
+`architect`, `developer`, `reviewer`, or `finish`), producing files like
+`events-default-default-explorer.jsonl`.
 
 ## Resume Detection
 
