@@ -58,6 +58,8 @@ function assertExhaustive(msg: InspectorMessage): string {
       return `task.status:${msg.status}`;
     case 'reply.create':
       return `reply.create:${msg.pin.id}`;
+    case 'batch.abort':
+      return `batch.abort:${msg.batchId}`;
     default: {
       // Compile-time exhaustiveness guard: if a new case is added to
       // InspectorMessage without a matching `case` above, `msg` will not be
@@ -161,8 +163,9 @@ describe('InspectorMessage exhaustiveness', () => {
       { type: 'batch.finalize', batchId: 'b', taskPath: 'tasks/001/task.md' },
       { type: 'task.status', batchId: 'b', status: 'running' },
       { type: 'reply.create', parentPinId: pin.id, pin, comment: 'reply' },
+      { type: 'batch.abort', batchId: 'b' },
     ];
-    expect(cases).toHaveLength(11);
+    expect(cases).toHaveLength(12);
     for (const msg of cases) {
       expect(typeof assertExhaustive(msg)).toBe('string');
     }

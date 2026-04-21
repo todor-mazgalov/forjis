@@ -266,15 +266,54 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
   /**
    * Forward a clarify-chat answer to any in-process subscriber.
    *
-   * v1 performs no state mutation — task 005's clarifier orchestrator
-   * subscribes to the `clarify.answer` event and drives the subprocess from
-   * there. This method never throws.
+   * Public interface path — kept for backward compatibility with
+   * non-pump callers. Delegates to {@link answerClarifyWithClient} with
+   * `clientId: null` so the emitted event carries the same shape
+   * regardless of call site.
    *
    * @param batchId - Identifier of the batch being clarified.
    * @param answer - Answer to the most recent {@link ../../shared/src/inspector-types.ts:ClarifyQuestion}.
    */
   async answerClarify(batchId: string, answer: ClarifyAnswer): Promise<void> {
-    this.emit('clarify.answer', { batchId, answer });
+    await this.answerClarifyWithClient(batchId, answer, null);
+  }
+
+  /**
+   * Internal path used by the message pump to thread the originating
+   * client id through to the `clarify.answer` event so the clarifier
+   * runner can address the same client with the next `clarify.question`
+   * frame.
+   *
+   * The public {@link InspectorService} interface is deliberately NOT
+   * widened — `clientId` is a facilitator-internal routing concern.
+   *
+   * @param batchId - Identifier of the batch being clarified.
+   * @param answer - Answer to the most recent question.
+   * @param clientId - Originating client identifier, or `null` when the
+   *   call came from a non-pump caller (tests, scripted drivers).
+   */
+  async answerClarifyWithClient(
+    batchId: string,
+    answer: ClarifyAnswer,
+    clientId: string | null,
+  ): Promise<void> {
+    this.emit('clarify.answer', { batchId, answer, clientId });
+  }
+
+  /**
+   * Request termination of the clarifier subprocess for a batch.
+   *
+   * Emits `batch.abort` so the clarifier runner can tear down the
+   * running subprocess and finalise with assumptions. This method is
+   * facilitator-internal and is NOT part of the shared
+   * {@link InspectorService} interface.
+   *
+   * @param batchId - Identifier of the batch to abort.
+   * @param clientId - Originating client identifier, or `null` when
+   *   the call came from a non-pump caller.
+   */
+  async abortBatch(batchId: string, clientId: string | null): Promise<void> {
+    this.emit('batch.abort', { batchId, clientId });
   }
 
   /**

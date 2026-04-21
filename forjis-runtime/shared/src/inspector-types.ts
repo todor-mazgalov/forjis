@@ -228,10 +228,15 @@ export interface ClarifyAnswer {
 /**
  * The full Inspector v1.0 wire-message union.
  *
- * Every on-the-wire message is exactly one of the eleven members below,
+ * Every on-the-wire message is exactly one of the twelve members below,
  * discriminated by the `type` literal. Consumers MUST pattern-match with a
  * `switch (msg.type)` followed by a `never`-assignment to guarantee
  * compile-time exhaustiveness.
+ *
+ * The `batch.abort` member is a strictly additive extension added in task
+ * inspector-005: it gives clients an explicit abort path for the clarifier
+ * subprocess. Because the change is additive, `PROTOCOL_VERSION` remains
+ * `"forjis-inspector/1.0"`.
  */
 export type InspectorMessage =
   | { type: 'session.join'; token: string; platform: Platform; clientId: string }
@@ -244,7 +249,8 @@ export type InspectorMessage =
   | { type: 'clarify.answer'; batchId: string; answer: ClarifyAnswer }
   | { type: 'batch.finalize'; batchId: string; taskPath: string }
   | { type: 'task.status'; batchId: string; status: BatchStatus; summary?: string }
-  | { type: 'reply.create'; parentPinId: string; pin: Pin; comment: string };
+  | { type: 'reply.create'; parentPinId: string; pin: Pin; comment: string }
+  | { type: 'batch.abort'; batchId: string };
 
 /**
  * Compile-time exhaustiveness helper for {@link InspectorMessage}.

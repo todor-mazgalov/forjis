@@ -133,3 +133,36 @@ export class EngineTimeoutError extends CliError {
     this.name = 'EngineTimeoutError';
   }
 }
+
+/**
+ * Thrown when an operation requires an engine capability the loaded engine
+ * does not implement (for example, mid-run user-message injection via
+ * `onUserMessage` on an engine that only supports one-shot spawns).
+ *
+ * Also raised by engines that DO implement the capability when the target
+ * subprocess for `taskId` is not currently running — either because it
+ * already exited or the caller passed a stale id.
+ */
+export class EngineCapabilityError extends CliError {
+  /**
+   * Construct an `EngineCapabilityError`.
+   *
+   * @param engineName - Name of the engine that was asked to perform the
+   *   operation (for example `"claude"`).
+   * @param capability - Human-readable capability identifier (for example
+   *   `"onUserMessage"`).
+   * @param detail - Optional additional context attached to the message
+   *   (for example the task id whose subprocess was missing).
+   */
+  constructor(
+    public readonly engineName: string,
+    public readonly capability: string,
+    detail?: string,
+  ) {
+    const suffix = detail ? ` (${detail})` : '';
+    super(
+      `Engine "${engineName}" does not support capability "${capability}"${suffix}`,
+    );
+    this.name = 'EngineCapabilityError';
+  }
+}
