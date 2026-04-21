@@ -1,0 +1,71 @@
+/*
+ * PipelinePanel.module.css — Styles for the middle (pipeline) column.
+ *
+ * Wraps the `Panel` primitive in a full-height section so the card list can
+ * scroll without pushing the header. Header-row typography mirrors the
+ * `TaskRail` head rule so the three columns share a typographic rhythm. The
+ * right-aligned `.toggle` hosts the List/Graph `SegmentedToggle`; the
+ * primitive owns its own footprint so no min-size shim is needed here.
+ * Consumes tokens from styles/tokens.css; no literal colours.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--bg);
+}
+
+/* Header row: heading + counter + reserved toggle slot. */
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.heading {
+  color: var(--text-muted);
+}
+
+.counter {
+  color: var(--text-dim);
+  background: var(--bg-2);
+  padding: 1px var(--space-2);
+  border-radius: 8px;
+  font-size: var(--text-2xs);
+  letter-spacing: 0;
+}
+
+/* Right-aligned slot for the List/Graph `SegmentedToggle`. The primitive
+   owns its own size; we only need to push it to the right edge of the row. */
+.toggle {
+  margin-left: auto;
+}
+
+/* Scrollable body wrapper around the PipelineList. */
+.body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Empty-state placeholder — matches the TaskRail `.empty` treatment. */
+.empty {
+  padding: 40px var(--space-4);
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}

@@ -1,0 +1,97 @@
+/*
+ * tokens.css — Design tokens for the Forjis Solid client.
+ *
+ * Declares the full palette, typography families, type scale, spacing scale, and
+ * structural tokens on :root. Dense density only — no comfortable-density
+ * overrides. All values documented in design.md decision D-1 and D-2 of the
+ * redesign-003 change.
+ *
+ * Aliases from the reference stylesheet (tasks/_redesign-assets/styles.css) are
+ * preserved so later view-layer tasks can copy-paste CSS without renames.
+ */
+
+:root {
+  /* ---------- Surfaces ---------- */
+  --bg-base: #0b0d10;
+  --bg-panel: #0f1216;
+  --bg-raised: #13171c;
+  --bg-sunken: #181d23;
+
+  /* Reference-compatible aliases — resolve to canonical surfaces above. */
+  --bg: var(--bg-base);
+  --bg-1: var(--bg-panel);
+  --bg-2: var(--bg-raised);
+  --bg-3: var(--bg-sunken);
+
+  /* ---------- Borders ---------- */
+  --border: #1a1f26;
+  --border-strong: #273039;
+
+  /* ---------- Text ---------- */
+  --text: #d4dadf;
+  --text-dim: #8a95a2;
+  --text-muted: #6b7785;
+
+  /* Reference alias — the prototype used --text-mute. */
+  --text-mute: var(--text-muted);
+
+  /* ---------- Accent ---------- */
+  /* Primary mint accent pinned by project-vision doc. OKLCH chosen for
+     perceptual uniformity when deriving --accent-dim; see D-2. */
+  --accent: oklch(0.78 0.18 145);
+  --accent-dim: oklch(0.45 0.11 145);
+  --accent-glow: oklch(0.78 0.18 145 / 0.12);
+
+  /* ---------- Semantic palette ---------- */
+  --amber: #f5c06a;
+  --amber-dim: #5a4620;
+  --red: #ef6d6d;
+  --red-dim: #5a2626;
+  --blue: #7db8ff;
+  --violet: #b392f0;
+  --pink: #ff8fb6;
+  --cyan: #7de1ef;
+
+  /* ---------- Type families ---------- */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Reference aliases. */
+  --sans: var(--font-sans);
+  --mono: var(--font-mono);
+
+  /* ---------- Type scale ----------
+     Covers the recurring reference sizes (10, 11, 12, 13, 15 px). In-between
+     halves (10.5, 11.5, 12.5) stay as literals in the calling component. */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 15px;
+
+  /* ---------- Spacing scale ----------
+     Recurring reference values; one-offs (10px, 14px) stay literal. */
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+
+  /* ---------- Structural ---------- */
+  --row: 28px;
+  --radius: 4px;
+  --radius-sm: 3px;
+  --radius-xs: 2px;
+
+  /* ---------- Progress chain ----------
+     Three status-colour tokens used by the TaskCard progress chain (redesign-021 §15).
+     `--progress-done`    = completed segments, inherits the accent mint green.
+     `--progress-running` = the currently-running segment, amber for consistency
+                            with the StatusDot ring variant.
+     `--progress-planned` = future/planned segments — muted cool-grey so they
+                            read as "not yet started" without competing with
+                            done/running for attention. */
+  --progress-done: var(--accent);
+  --progress-running: var(--amber);
+  --progress-planned: #3a4452;
+}

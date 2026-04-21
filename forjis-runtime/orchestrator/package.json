@@ -1,0 +1,17 @@
+{
+  "name": "@forjis/orchestrator",
+  "version": "0.5.0",
+  "description": "Forjis orchestrator — Claude Code commands and skills for LLM-side pipeline execution",
+  "keywords": ["forjis", "claude-code", "commands", "skills"],
+  "homepage": "https://github.com/todor-mazgalov/forjis#readme",
+  "bugs": { "url": "https://github.com/todor-mazgalov/forjis/issues" },
+  "license": "MIT",
+  "author": "Todor Mazgalov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/todor-mazgalov/forjis.git",
+    "directory": "forjis-runtime/orchestrator"
+  },
+  "engines": { "node": ">=20" },
+  "files": [".claude/commands", ".claude/skills"]
+}

@@ -1,0 +1,28 @@
+# Common
+.env
+.env.*
+.DS_Store
+*.log
+.idea/
+.vscode/
+**/.claude/settings.local.json
+*.swp
+*.swo
+
+# TypeScript / Node.js
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.nuxt/
+*.tsbuildinfo
+
+# Forjis
+.forjis/
+/openspec
+/tasks/
+/test/
+
+# Generated at publish time by cli/package.json prepack script
+forjis-runtime/cli/README.md

@@ -1,0 +1,35 @@
+/*
+ * ConfigView.module.css — translated from
+ * tasks/_redesign-assets/styles.css:676-722 (.config-view, .config-main,
+ * .config-sidebar spacing). Two-column CSS grid (240px sidebar · 1fr main).
+ * The main column is `position: relative` so DetailDrawer's absolute overlay
+ * and drawer anchor inside it (design.md § D-7).
+ */
+
+.view {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}

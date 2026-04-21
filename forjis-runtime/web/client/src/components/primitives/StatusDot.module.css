@@ -1,0 +1,96 @@
+/*
+ * StatusDot.module.css — Styles for the StatusDot primitive.
+ *
+ * Three animation variants (pulse / ring / static) × six state colours. CSS
+ * Module scoping namespaces the `@keyframes` so they cannot collide with
+ * global `pulse` animations declared elsewhere.
+ */
+
+.root {
+  display: inline-block;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* ---------- State colours ---------- */
+
+.stateIdle,
+.stateQueued {
+  background: var(--bg-sunken);
+}
+
+.stateDone {
+  background: var(--accent);
+}
+
+.stateRunning {
+  background: var(--accent);
+}
+
+/* When running with the `ring` variant, the dot is amber (pipeline role-marker
+   context) rather than accent (topbar context). The `.variantRing` class
+   wins because it is applied after the state class in the class list. */
+.variantRing.stateRunning {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(245, 192, 106, 0.15);
+}
+
+.stateFailed {
+  background: var(--red);
+}
+
+.stateSkipped {
+  background: var(--bg-sunken);
+  border: 1px dashed var(--text-muted);
+}
+
+/* ---------- Variant: pulse ---------- */
+
+.variantPulse {
+  box-shadow: 0 0 0 2px var(--accent-glow);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+  50% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+/* ---------- Variant: ring ---------- */
+
+.variantRing::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1px solid var(--amber);
+  border-radius: 50%;
+  animation: ring 1.6s infinite;
+  opacity: 0.5;
+}
+
+@keyframes ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+/* ---------- Variant: static ---------- */
+
+/* Intentionally empty — the static variant uses only the .root + state class
+   with no additional decoration or animation. Rule declared for parity and to
+   document that the variant exists as a first-class option. */
+.variantStatic {
+  box-shadow: none;
+  animation: none;
+}

@@ -1,0 +1,48 @@
+/*
+ * SegmentedToggle.module.css — Styles for the SegmentedToggle primitive.
+ *
+ * Single bordered container with 1px separators between segments. Active
+ * segment uses `--bg-raised` fill and `--accent` text to match the reference
+ * `.viz-toggle button.on` rule.
+ */
+
+.root {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  height: 22px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  cursor: pointer;
+  height: 100%;
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+}
+
+.segment:last-child {
+  border-right: none;
+}
+
+.segment:hover {
+  color: var(--text);
+}
+
+.active {
+  background: var(--bg-raised);
+  color: var(--accent);
+}

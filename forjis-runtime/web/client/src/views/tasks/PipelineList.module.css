@@ -1,0 +1,19 @@
+/*
+ * PipelineList.module.css — Styles for the vertical role-card list.
+ *
+ * Minimal rules — the cards own their own padding and bottom margin. Mirrors
+ * the reference `.pipeline { padding: 8px }` block from
+ * tasks/_redesign-assets/styles.css. No literal colours; tokens only.
+ */
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.item {
+  /* Cards already carry their own `margin-bottom`; no extra per-item spacing. */
+  margin: 0;
+  padding: 0;
+}

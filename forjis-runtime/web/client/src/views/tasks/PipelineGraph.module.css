@@ -1,0 +1,46 @@
+/*
+ * PipelineGraph.module.css — Styles for the graph variant of the pipeline
+ * column.
+ *
+ * Mirrors `.graph-container`, `.graph-svg`, `.graph-edge`, `.graph-edge.active`
+ * and the `flow` keyframed stroke-dashoffset animation from
+ * tasks/_redesign-assets/styles.css. Tokens only — no literal colours. The
+ * parent `.body` (PipelinePanel) handles overflow, so this module does not
+ * set `overflow` itself.
+ */
+
+.container {
+  position: relative;
+  background:
+    radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 20px 20px,
+    var(--bg);
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.edge {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.edgeActive {
+  stroke: var(--accent);
+  stroke-dasharray: 4 4;
+  animation: flow 1s linear infinite;
+}
+
+.node {
+  position: absolute;
+  width: 200px;
+}
+
+@keyframes flow {
+  to {
+    stroke-dashoffset: -8;
+  }
+}

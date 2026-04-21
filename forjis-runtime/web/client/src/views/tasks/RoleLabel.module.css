@@ -1,0 +1,23 @@
+/*
+ * RoleLabel.module.css — Two-tone inline label for `<role> @ <team>`.
+ *
+ * Renders as two adjacent inline spans so the label flows as a single line:
+ * the role name in the default foreground (`--text`, the token other surfaces
+ * already use for primary text — there is no `--fg` token in this codebase),
+ * and ` @ <team>` in the muted `--text-muted` token so the team reads as a
+ * secondary qualifier without disrupting the role-name scan path.
+ *
+ * Consumed everywhere a role identity is user-visible — role cards, the
+ * detail-pane header + subtitle, the orchestrator summary rows, the pipeline
+ * list, the graph nodes, the files-touched rows, and the role-config KV
+ * table. The one separator everywhere is the exact string ` @ ` (one space on
+ * each side of the `@`), matching `formatRoleDisplay` from `@forjis/shared`.
+ */
+
+.roleName {
+  color: var(--text);
+}
+
+.roleTeam {
+  color: var(--text-muted);
+}

@@ -1,0 +1,240 @@
+/*
+ * DetailDrawer.module.css — translated from
+ * tasks/_redesign-assets/styles.css:1037-1094 plus the `slidein`/`fadein`
+ * keyframes at 1056-1057. The overlay + drawer are both absolute-positioned
+ * inside the parent's `.main` column. Tokens come from styles/tokens.css.
+ */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 50;
+  animation: fadein 0.12s;
+}
+
+.drawer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 460px;
+  background: var(--bg);
+  border-left: 1px solid var(--border-strong);
+  z-index: 51;
+  display: flex;
+  flex-direction: column;
+  animation: slidein 0.18s cubic-bezier(0.2, 0.6, 0.2, 1);
+  box-shadow: -20px 0 40px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes slidein {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+}
+
+.drawerHead {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.drawerHeadText {
+  flex: 1;
+  min-width: 0;
+}
+
+.drawerName {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.drawerMeta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-mute);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.closeBtn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 8px;
+}
+
+.closeBtn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.drawerBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.descriptionBlock {
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.sectionTitle {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin: 16px 0 8px;
+}
+
+.sectionTitle:first-child {
+  margin-top: 0;
+}
+
+.kvTable {
+  font-family: var(--mono);
+  font-size: 11px;
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 4px 12px;
+}
+
+.kvKey {
+  color: var(--text-mute);
+}
+
+.kvValue {
+  color: var(--text);
+  word-break: break-word;
+}
+
+.fileList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fileBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-1);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}
+
+.fileBtn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--bg-2);
+}
+
+.filePath {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileExt {
+  font-size: 9.5px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.codeBlock {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  overflow-x: auto;
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* Icon chip reused inside the drawer head. Matches the card grid's colours. */
+.catIcon {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.catIconRole {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.catIconSkill {
+  color: var(--blue);
+  border-color: #2a4a66;
+}
+
+.catIconHook {
+  color: var(--violet);
+  border-color: #443866;
+}
+
+.catIconAgent {
+  color: var(--amber);
+  border-color: var(--amber-dim);
+}
+
+.catIconConstraint {
+  color: var(--red);
+  border-color: var(--red-dim);
+}
+
+.catIconPersona {
+  color: var(--pink);
+  border-color: #5a2d44;
+}
+
+.catIconOutcome {
+  color: var(--cyan);
+  border-color: #205258;
+}

@@ -1,0 +1,107 @@
+/*
+ * TopBar.module.css — Styling for the shell's top navigation bar.
+ *
+ * Ports the reference layout rules from tasks/_redesign-assets/styles.css
+ * lines 63-160 (`.topbar`, `.logo`, `.tab`) and consumes tokens from
+ * src/styles/tokens.css. Scoped via CSS Modules; no global selectors.
+ *
+ * Redesign-014 removed the search input + `⌘K` hint in favor of a
+ * project-icon + breadcrumb cluster next to the logo mark.
+ */
+
+/* Root: horizontal flex bar sized by the parent grid (40px fixed height). */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-size: var(--text-sm);
+  height: 100%;
+}
+
+/* Brand cluster: logo image + project icon + breadcrumbs. */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.logoMark {
+  width: 64px;
+  height: auto;
+  display: block;
+}
+
+/* Fallback plain-text project name rendered only while the
+   `/api/config` fetch has not yet resolved a `projectDir` string. */
+.projectName {
+  color: var(--text);
+}
+
+/* Breadcrumbs: path segments separated by slashed glyphs. Horizontal
+   flex row so segments wrap to a single line; overflow is clipped by
+   the parent's fixed-height grid cell rather than styled here. */
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  min-width: 0;
+}
+
+/* Middle (non-last) segments — muted. */
+.breadcrumbSegment {
+  color: var(--text-mute);
+}
+
+/* Last segment (project name) — primary text color. */
+.breadcrumbSegmentLast {
+  color: var(--text);
+}
+
+/* Separator glyph between segments. Same muted color as middle segments. */
+.breadcrumbSep {
+  color: var(--text-mute);
+  user-select: none;
+}
+
+/* Tab nav row. Margin-left pushes the tabs past the brand cluster. */
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: var(--space-5);
+}
+
+.tab {
+  padding: 0 var(--space-4);
+  height: var(--row);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--bg-2);
+}
+
+.tabActive {
+  color: var(--text);
+  background: var(--bg-2);
+}

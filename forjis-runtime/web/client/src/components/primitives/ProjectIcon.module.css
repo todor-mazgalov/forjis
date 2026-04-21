@@ -1,0 +1,24 @@
+/*
+ * ProjectIcon.module.css — Styles for the shell project-icon primitive.
+ *
+ * Provides a thin rounded-square SVG wrapper the component renders next
+ * to the forjis logo mark in the TopBar. Background color and letter
+ * come from the shared `project-icon` helpers; these rules cover only
+ * layout, radius, and typography of the letter glyph.
+ */
+
+/* Root: block-sized SVG so the surrounding flex row can measure height. */
+.root {
+  display: block;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+/* Letter glyph: centered inside the viewBox via SVG text-anchor attributes
+   on the <text> node; the rule below only fixes the font stack and weight
+   so it matches the pre-redesign canvas favicon. */
+.letter {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  fill: #fff;
+}

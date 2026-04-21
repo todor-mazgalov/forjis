@@ -1,0 +1,196 @@
+/*
+ * TaskCard.module.css — Styles for a single TaskCard row.
+ *
+ * Ports the reference `.task-item` layout from
+ * tasks/_redesign-assets/styles.css lines 257-297 — padding, border-bottom,
+ * selected-state accent bar, and nested meta row. Branch chain styling
+ * uses `.branch-row` / `.branch-copy-btn` class blocks. Consumes tokens
+ * from styles/tokens.css.
+ */
+
+/* Task row container. Click-through surface; the inner copy button stops
+   propagation so selection and copy do not collide. */
+.card {
+  padding: 10px var(--space-4);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  position: relative;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card:hover {
+  background: var(--bg-1);
+}
+
+/* Selected accent bar + raised-surface highlight. */
+.cardSelected {
+  background: var(--bg-1);
+}
+
+.cardSelected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+/* Header row: status dot, title, priority chip, elapsed time. */
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Elapsed time — right-aligned, monospace, dimmed. Uses tabular-nums so the
+   number width does not jitter between ticks. */
+.elapsed {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Segmented progress chain. Fixed-width segments (12×3px, flex:none) so the
+   chain has tactile uniform rhythm on any rail width. The row overflows
+   horizontally on very long pipelines — `overflow: hidden` clips rather than
+   wrapping. One segment per plan step; colour determined by status. */
+.progressChain {
+  display: flex;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.segment {
+  flex: none;
+  width: 12px;
+  height: 3px;
+  border-radius: 1.5px;
+}
+
+/* Status-coloured segment classes using the three progress tokens. */
+.segmentDone {
+  background: var(--progress-done);
+}
+
+.segmentRunning {
+  background: var(--progress-running);
+  animation: taskCardProgressPulse 2s infinite;
+}
+
+.segmentPlanned {
+  background: var(--progress-planned);
+}
+
+/* Skipped segments borrow the colour of their era at reduced opacity.
+   The `data-era` attribute is set by ProgressChain based on the step's
+   position relative to the first running segment. */
+.segmentSkippedPast {
+  background: var(--progress-done);
+  opacity: 0.25;
+}
+
+.segmentSkippedFuture {
+  background: var(--progress-planned);
+  opacity: 0.25;
+}
+
+/* Local pulse keyframes — mirrors the StatusDot pulse variant. CSS Modules
+   scope the name so it cannot collide with other `pulse` keyframes. */
+@keyframes taskCardProgressPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* Branch chain list. Vertical stack directly below the title row. */
+.branchList {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.branchRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 2px 0;
+  position: relative;
+}
+
+/* Small ring node that sits on the vertical branch line. The connector is
+   drawn by the ::before of non-last rows so a solid chain appears between
+   nodes without explicit row-level wiring. */
+.branchNode {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-muted);
+  background: var(--bg);
+  flex-shrink: 0;
+  margin-left: var(--space-1);
+}
+
+.branchRow:not(:last-child) .branchNode::before {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1.5px;
+  height: calc(100% + 6px);
+  background: var(--text-muted);
+}
+
+.branchName {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-grow: 1;
+  min-width: 0;
+}
+
+/* Copy-to-clipboard icon button. Transparent background, low-emphasis colour
+   until hovered. */
+.branchCopyBtn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-xs);
+}
+
+.branchCopyBtn:hover {
+  color: var(--text);
+  background: var(--bg-2);
+}

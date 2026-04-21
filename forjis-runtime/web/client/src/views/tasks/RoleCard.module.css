@@ -1,0 +1,208 @@
+/*
+ * RoleCard.module.css — Styles for a single pipeline-step row.
+ *
+ * Ports the reference `.role-node` block from
+ * tasks/_redesign-assets/styles.css (lines 316-400, 804-840, 932-945) but
+ * reorganised into modular class names and token-backed values.
+ *
+ * Iteration 2 restructure (see review.md §Required fixes): the card root is a
+ * plain `<div class={.card}>` carrying the border, radius, skipped/selected
+ * treatment. The primary activation target is a sibling
+ * `<button class={.selectButton}>`. Justification and chip rows are also
+ * siblings, so no interactive elements nest inside another button. Hover /
+ * focus-visible states live on `.selectButton`; the card border reacts via
+ * `:hover` on the div itself.
+ *
+ * Consumes tokens from styles/tokens.css; no literal colours.
+ */
+
+/* ---------- Card root (div) ---------- */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: var(--space-2);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-mono);
+  position: relative;
+}
+
+.card:hover {
+  border-color: var(--border-strong);
+}
+
+/* Selected card — accent border + dim accent-tinted glow background. Mirrors
+   TaskCard's selected treatment without copying its ::before accent bar
+   because the role list uses a full border instead. */
+.cardSelected {
+  border-color: var(--accent-dim);
+  background: linear-gradient(var(--accent-glow), var(--accent-glow)), var(--bg-panel);
+}
+
+.cardSelected .name {
+  color: var(--accent);
+}
+
+/* Skipped treatment — dashed border + reduced opacity. Paired with
+   `.nameStruck` on the role name. The select button inside inherits the
+   reduced opacity naturally. */
+.cardSkipped {
+  border-style: dashed;
+  opacity: 0.65;
+}
+
+/* ---------- Select button (header + score region) ---------- */
+
+.selectButton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.selectButton:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* ---------- Header row ---------- */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nameStruck {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+  color: var(--text-muted);
+}
+
+.elapsed {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- Score row ---------- */
+
+.scoreRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 0 0 16px;
+}
+
+.scoreValue {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 24px;
+  text-align: right;
+}
+
+/* ---------- Justification row ---------- */
+
+.justifyRow {
+  padding: 0 0 0 16px;
+  min-width: 0;
+}
+
+.justifyLine {
+  display: inline-block;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: help;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.justifyLine::before {
+  content: '\203A  ';
+  color: var(--text-muted);
+}
+
+.justifyLine:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.justifyBody {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text);
+  font-style: italic;
+  line-height: 1.5;
+  max-width: 320px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.justifyBody::before {
+  content: '\203A  ';
+  color: var(--text-muted);
+}
+
+/* ---------- Chip row ---------- */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: 0 0 0 16px;
+}
+
+.chipButton {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chipButton:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-xs);
+}

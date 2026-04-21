@@ -1,0 +1,40 @@
+/*
+ * Panel.module.css — Styles for the Panel primitive.
+ *
+ * Scoped via CSS Modules so class names cannot collide with future view-layer
+ * globals. Tokens consumed via var(); no fallbacks so missing tokens fail
+ * visibly during development.
+ */
+
+.root {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.header {
+  padding: 0 var(--space-4);
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+}
+
+.padded {
+  padding: var(--space-3);
+}

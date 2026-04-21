@@ -1,0 +1,41 @@
+/*
+ * DecisionPill.module.css — translated from
+ * `tasks/_redesign-assets/styles.css` lines 793-802
+ * (`.decision-pill` + `.started`/`.skipped`/`.pending`).
+ *
+ * Tiny monospaced pill dedicated to the DetailPane title row's orchestrator
+ * decision indicator. Ports the reference stylesheet into CSS-module-scoped
+ * class names; tokens come from `styles/tokens.css`. Distinct from the
+ * shared `Pill` primitive: narrower padding, narrower letter-spacing, and a
+ * dotted-border `pending` variant that the primitive does not encode.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+.stateStarted {
+  background: rgba(110, 231, 167, 0.1);
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+}
+
+.stateSkipped {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+}
+
+.statePending {
+  background: transparent;
+  color: var(--text-mute);
+  border: 1px dotted var(--border);
+}

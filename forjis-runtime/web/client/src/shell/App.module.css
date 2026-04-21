@@ -1,0 +1,39 @@
+/*
+ * App.module.css — Root layout grid for the Forjis app shell.
+ *
+ * Ports the `.app` grid from tasks/_redesign-assets/styles.css lines 55-60.
+ * Three fixed-row grid (topbar / outlet / statusbar) filling the viewport.
+ * The outlet gets `min-height: 0` so its children can scroll without pushing
+ * the grid past the viewport. See design.md decision D-1 (redesign-004).
+ */
+
+/* Full-viewport three-row grid. Row heights match the reference (40/1fr/22). */
+.app {
+  display: grid;
+  grid-template-rows: 40px 1fr 22px;
+  height: 100vh;
+  background: var(--bg);
+}
+
+/* Main outlet. `min-height: 0` is required so descendants can overflow and
+   scroll; without it the grid row grows to fit content and the statusbar
+   drifts off-screen. */
+.outlet {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+/* Placeholder panel shown when a view has no content yet. Full-height,
+   centered label. Replaced by the real views in later tasks (5-11). */
+.placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

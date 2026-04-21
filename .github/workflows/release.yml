@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: forjis-runtime
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: forjis-runtime/package-lock.json
+
+      - name: Verify tag matches workspace versions
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          for pkg in shared resolver web facilitator cli orchestrator; do
+            PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
+            if [ "$PKG_VERSION" != "$TAG" ]; then
+              echo "Version mismatch: tag=$TAG but $pkg/package.json=$PKG_VERSION"
+              exit 1
+            fi
+          done
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm test
+
+      - name: Publish to npm
+        run: npm publish --workspaces --access=public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

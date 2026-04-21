@@ -1,0 +1,64 @@
+/*
+ * TaskRail.module.css — Styles for the left task rail column.
+ *
+ * Ports the reference `.panel` + `.panel-head` + `.panel-body` block from
+ * tasks/_redesign-assets/styles.css lines 186-254. The rail is a 
+ * full-height flex column; the scrollable body
+ * gets `min-height: 0` so cards can overflow without pushing the head.
+ */
+
+/* Rail column — vertical flex. The parent TasksView grid sizes its width. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* Panel-head row: heading label + task counter. 32px fixed per mockup. */
+.head {
+  height: 32px;
+  padding: 0 var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.heading {
+  color: var(--text-muted);
+}
+
+.counter {
+  color: var(--text-dim);
+  background: var(--bg-2);
+  padding: 1px var(--space-2);
+  border-radius: 8px;
+  font-size: var(--text-2xs);
+  letter-spacing: 0;
+}
+
+/* Scrollable card list. */
+.body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Empty-state placeholder shown while the first fetch is in flight or when
+   the server returns an empty task list. */
+.empty {
+  padding: 40px var(--space-4);
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}

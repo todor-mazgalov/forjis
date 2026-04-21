@@ -1,0 +1,130 @@
+/*
+ * RoleConfigTab.module.css — inline role definition + attached-resource
+ * chip rows for the "Config" tab.
+ *
+ * Mirrors the prototype's `.kv-table`, `.section-title`, `.code-block`, and
+ * `.attached-chip` selectors (see `_redesign-assets/styles.css` lines
+ * 1068–1095, 932–945) translated to CSS-module-scoped class names. No
+ * standalone "Files" block — the file affordance lives on the chips
+ * themselves per the task-9 requirement. Tokens come from
+ * `styles/tokens.css`.
+ */
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Centred dim placeholder for "select a task" / "select a step" / "role not found". */
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 24px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* Section heading above the key/value block and the chip rows. */
+.sectionTitle {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin: 16px 0 8px;
+}
+
+.sectionTitle:first-child {
+  margin-top: 0;
+}
+
+/* Two-column monospace grid for the static role fields (role / origin / agent). */
+.kvTable {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.kvKey {
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+
+.kvValue {
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* One row per attached-resource kind. Left-hand label column, right-hand
+   wrapping flex row of chip buttons. */
+.attachedRow {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.attachedLabel {
+  width: 100px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 2px;
+  flex-shrink: 0;
+}
+
+.attachedChips {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Button wrapper around a `<Chip>`. Resets native styling so only the
+   chip's own border/colour is visible; adds hover/focus affordance. */
+.chipButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.chipButton:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.chipButtonDisabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Preformatted expertise block — matches the prototype's `.code-block`. */
+.codeBlock {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  overflow-x: auto;
+  margin: 0;
+}

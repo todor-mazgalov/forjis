@@ -1,0 +1,37 @@
+/*
+ * KindPill.module.css — translated from tasks/_redesign-assets/styles.css
+ * lines 914-925 (.kind-pill, .kind-pill.pillar/.mandatory/.optional).
+ *
+ * Tokens come from styles/tokens.css — no additions needed. Tiny
+ * monospaced pill used on constraint cards and in the drawer header.
+ */
+
+.kindPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pillar {
+  color: var(--red);
+  background: rgba(239, 109, 109, 0.08);
+  border: 1px solid var(--red-dim);
+}
+
+.mandatory {
+  color: var(--amber);
+  background: rgba(245, 192, 106, 0.08);
+  border: 1px solid var(--amber-dim);
+}
+
+.optional {
+  color: var(--text-mute);
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+}

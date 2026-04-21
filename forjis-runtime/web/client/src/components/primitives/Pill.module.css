@@ -1,0 +1,55 @@
+/*
+ * Pill.module.css — Styles for the Pill primitive.
+ *
+ * Maps each pipeline role status (pillars/data.md) plus the extra `pending`
+ * label to reference `.pill.<state>` colour triples.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+.statePlanned {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+}
+
+.stateRunning {
+  background: rgba(245, 192, 106, 0.12);
+  color: var(--amber);
+  border: 1px solid var(--amber-dim);
+}
+
+.stateDone {
+  background: rgba(110, 231, 167, 0.1);
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+}
+
+.stateSkipped {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+}
+
+.stateFailed {
+  background: rgba(239, 109, 109, 0.1);
+  color: var(--red);
+  border: 1px solid var(--red-dim);
+}
+
+.statePending {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}

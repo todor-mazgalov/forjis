@@ -1,0 +1,57 @@
+/*
+ * Chip.module.css — Styles for the Chip primitive.
+ *
+ * One .root rule plus one .tone-<name> modifier per tone. Colour pairings
+ * mirror reference `.attached-chip.<tone>` rules in
+ * tasks/_redesign-assets/styles.css.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.toneNeutral {
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+.toneSkill {
+  color: var(--blue);
+  border-color: #2a4a66;
+}
+
+.toneHook {
+  color: var(--violet);
+  border-color: #443866;
+}
+
+.toneAgent {
+  color: var(--amber);
+  border-color: var(--amber-dim);
+}
+
+.toneOutcome {
+  color: var(--cyan);
+  border-color: #205258;
+}
+
+.tonePersona {
+  color: var(--pink);
+  border-color: #5a2d44;
+}
+
+.toneConstraint {
+  color: var(--red);
+  border-color: var(--red-dim);
+}

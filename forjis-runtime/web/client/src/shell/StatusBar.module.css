@@ -1,0 +1,41 @@
+/*
+ * StatusBar.module.css — Styling for the shell's bottom status bar.
+ *
+ * Ports the reference layout rules from tasks/_redesign-assets/styles.css
+ * lines 163-175 (`.statusbar`, `.statusbar .chip`, `.ml-auto`) and consumes
+ * tokens from src/styles/tokens.css. Scoped via CSS Modules.
+ *
+ * Redesign-014 expanded the chip inventory from one to eight; the bar
+ * now relies on the existing `gap` to separate chips visually and wraps
+ * nothing — overflow is governed by the parent grid cell.
+ */
+
+/* Root: horizontal flex bar sized by the parent grid (22px fixed height). */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-mute);
+  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+  height: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Chip: grouped indicator cell. Inline flex so the status dot aligns with
+   the adjacent label without needing vertical-align gymnastics. */
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* Right-aligned slot. Marks the chip that should push against the right edge. */
+.rightSlot {
+  margin-left: auto;
+}

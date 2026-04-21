@@ -1,0 +1,33 @@
+/*
+ * ScoreBar.module.css — Styles for the ScoreBar primitive.
+ *
+ * Track + fill structure. NO `.threshold` element — orchestrator owns
+ * threshold decisions per redesign-002 and the reference was intentionally
+ * stripped of that affordance in this redesign.
+ */
+
+.root {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  background: var(--bg-raised);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+  min-width: 60px;
+}
+
+.fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--radius-xs);
+}
+
+.toneAccent {
+  background: var(--accent);
+}
+
+.toneSkipped {
+  background: var(--text-muted);
+}

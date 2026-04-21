@@ -1,0 +1,234 @@
+/*
+ * FileViewer.module.css — Styles for the app-global file-viewer modal.
+ *
+ * Mirrors the prototype's `.file-viewer-overlay`, `.file-viewer`,
+ * `.file-viewer-head`, `.file-viewer-body` rules (see
+ * `tasks/_redesign-assets/styles.css` lines 867–901) translated to
+ * CSS-module-scoped class names per redesign-010 design.md § D-8. The
+ * token colour classes are copied from `EventsTab.module.css` so the
+ * `classMap` argument to `highlight()` can emit scoped names identical to
+ * the ones used by the live-events tab.
+ *
+ * Tokens come from `styles/tokens.css`.
+ */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.panel {
+  width: min(880px, 92vw);
+  height: min(80vh, 720px);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.sourceBadge {
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--blue);
+  background: rgba(125, 184, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.copyBtn,
+.closeBtn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.copyBtn:hover,
+.closeBtn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.closeBtn {
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 8px;
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.source {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--red);
+  text-align: center;
+}
+
+/* Syntax-highlighting token classes. Forwarded into the highlighter via the
+   `classMap` argument so highlighted source inherits the same colours that
+   the live-events tab uses. Keep this set in sync with
+   `EventsTab.module.css`. */
+.tokStr { color: var(--accent); }
+.tokKey { color: var(--cyan); }
+.tokNum { color: var(--amber); }
+.tokBool { color: var(--violet); }
+.tokNull { color: var(--pink); }
+.tokCmt { color: var(--text-mute); font-style: italic; }
+.tokPunc { color: var(--text-dim); }
+.tokKw { color: var(--violet); }
+.tokFn { color: var(--blue); }
+.tokAdd { color: var(--accent); }
+.tokDel { color: var(--red); }
+.tokCtx { color: var(--text-dim); }
+.tokMdHeading { color: var(--text); font-weight: 600; }
+.tokMdLink { color: var(--accent); text-decoration: none; }
+.tokMdLink:hover { text-decoration: underline; }
+.tokMdFence { color: var(--text-mute); }
+
+/* Markdown heading levels (redesign-020). Sizes taper from --text-md at level
+   1 down toward --text-sm at level 6. All levels share the emphasised
+   foreground colour and a bold weight. */
+.tokMdHeading1 {
+  color: var(--text);
+  font-weight: 700;
+  font-size: var(--text-md);
+}
+.tokMdHeading2 {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+}
+.tokMdHeading3 {
+  color: var(--text);
+  font-weight: 600;
+  font-size: var(--text-base);
+}
+.tokMdHeading4 {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.tokMdHeading5 {
+  color: var(--text);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.tokMdHeading6 {
+  color: var(--text);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Fenced code block body — a panel-background block with padding + radius. */
+.tokMdCodeBlock {
+  display: inline-block;
+  background: var(--bg-1);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+/* Inline code — subtle chip with mint foreground. */
+.tokMdInlineCode {
+  background: var(--bg-1);
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+/* Strong / em keep the surrounding colour so they read as emphasis, not colour. */
+.tokMdStrong { font-weight: 700; color: var(--text); }
+.tokMdEm { font-style: italic; color: var(--text); }
+
+/* List markers and blockquotes use muted tones so the content shines. */
+.tokMdListMarker { color: var(--text-mute); }
+.tokMdQuote {
+  display: inline-block;
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+  color: var(--text-mute);
+}
+
+/* Horizontal rule — thin underline using the standard border token. */
+.tokMdHr {
+  display: inline-block;
+  width: 100%;
+  color: transparent;
+  border-top: 1px solid var(--border);
+  line-height: 0;
+}

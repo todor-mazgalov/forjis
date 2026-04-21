@@ -1,0 +1,240 @@
+/*
+ * EventsTab.module.css — Styles for the live events stream and its rows.
+ *
+ * Mirrors the prototype's `.detail-body`, `.log-block`, `.tok-*` selectors
+ * (see `tasks/_redesign-assets/styles.css` lines 481–612) translated to
+ * CSS-module-scoped class names per design D-7 of redesign-008. The token
+ * colour rules are forwarded into the highlighter's HTML output via the
+ * `classMap` argument so the same module can colour both top-level rows and
+ * nested ToolCallBlock bodies. Tokens come from `styles/tokens.css`.
+ */
+
+/* Root wrapper — vertical stack of filter row + scrollable body. The parent
+   detail-pane body is a flex column and assigns this element flex:1, so the
+   inner `.body` can scroll independently while `.filterRow` stays pinned. */
+.root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 12px 0;
+}
+
+/* ---------- Filter row (redesign-018) ----------
+   Sticky chip strip above the scrollable body. Mirrors the reference
+   stylesheet's `.log-filters` rules (tasks/_redesign-assets/styles.css lines
+   482-503) translated to CSS-module-scoped class names. */
+.filterRow {
+  display: flex;
+  gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-wrap: wrap;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.filterChip {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.filterChip:hover {
+  border-color: var(--border-strong);
+}
+
+.filterChipOn {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--bg-2);
+}
+
+/* Empty (off) marker — small dim ring. The `.filterChipOn` modifier fills
+   it with the accent colour so the on/off state is visually obvious. */
+.filterChipDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--text-mute);
+  flex-shrink: 0;
+}
+
+.filterChipOn .filterChipDot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.filterChipLabel {
+  white-space: nowrap;
+}
+
+.filterChipCount {
+  color: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Live indicator on the right edge of the filter row. The dot pulses when
+   `live` is true and stays dim when the SSE channel is disconnected. */
+.liveIndicator {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.liveDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-mute);
+  flex-shrink: 0;
+}
+
+.liveDotOn {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+  animation: liveDotPulse 2s infinite;
+}
+
+@keyframes liveDotPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+  50% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+/* Centred dim placeholder used for "select a task" / "no events yet". */
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* Container around every event row — matches `.log-block` in the prototype. */
+.eventRow {
+  margin: 0 16px 6px;
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  position: relative;
+}
+
+/* Single-line layout used by the system/assistant/text/load buckets. */
+.eventOneLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.eventOneLineContent {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+/* Red-border modifier for `error` events. */
+.eventError {
+  border-left-color: var(--red-dim);
+}
+
+.eventError .typeBadge {
+  color: var(--red);
+  background: rgba(239, 109, 109, 0.08);
+}
+
+/* Right-aligned monospace timestamp on each row. */
+.timestamp {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mute);
+  flex-shrink: 0;
+}
+
+/* Small uppercase pill rendering the event type name. */
+.typeBadge {
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--blue);
+  background: rgba(125, 184, 255, 0.08);
+  flex-shrink: 0;
+}
+
+/* Bucket-specific badge tints — matches the `.log-block.<kind> .badge` rules
+   in the prototype so each event type carries a familiar visual signal. */
+.badgeAssistant {
+  color: var(--violet);
+  background: rgba(179, 146, 240, 0.08);
+}
+
+.badgeUser {
+  color: var(--amber);
+  background: rgba(245, 192, 106, 0.08);
+}
+
+.badgeSystem {
+  color: var(--blue);
+  background: rgba(125, 184, 255, 0.08);
+}
+
+.badgeError {
+  color: var(--red);
+  background: rgba(239, 109, 109, 0.08);
+}
+
+/* Syntax-highlighting token classes. Forwarded into the highlighter via the
+   `classMap` argument so highlighted JSON inherits the same colours that the
+   prototype's global `.tok-*` rules used. */
+.tokStr { color: var(--accent); }
+.tokKey { color: var(--cyan); }
+.tokNum { color: var(--amber); }
+.tokBool { color: var(--violet); }
+.tokNull { color: var(--pink); }
+.tokCmt { color: var(--text-mute); font-style: italic; }
+.tokPunc { color: var(--text-dim); }
+.tokKw { color: var(--violet); }
+.tokFn { color: var(--blue); }
+.tokAdd { color: var(--accent); }
+.tokDel { color: var(--red); }
+.tokCtx { color: var(--text-dim); }
+.tokMdHeading { color: var(--text); font-weight: 600; }
+.tokMdLink { color: var(--blue); text-decoration: underline; }
+.tokMdFence { color: var(--text-mute); }

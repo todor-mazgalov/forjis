@@ -1,0 +1,43 @@
+/*
+ * ToolResultBlock.module.css — Nested tool-result body inside a ToolCallBlock.
+ *
+ * Lives inside the parent ToolCallBlock's `.results` container, which already
+ * supplies the border-top separator. We only style the local header row + id
+ * pill here; the pre-formatted body re-uses `.body`, `.preview`,
+ * `.previewClipped`, and `.expandBtn` from ToolCallBlock.module.css for a
+ * consistent collapse/clip treatment across call and result blocks.
+ */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-mute);
+  font-size: 10.5px;
+}
+
+.timestamp {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mute);
+  flex-shrink: 0;
+}

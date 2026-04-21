@@ -1,0 +1,53 @@
+/*
+ * Popover.module.css — Styles for the Popover primitive.
+ *
+ * Absolute positioning relative to the wrapper. Four placement variants
+ * move the content box to the corresponding corner of the trigger.
+ */
+
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  display: inline-flex;
+}
+
+.content {
+  position: absolute;
+  z-index: 30;
+  min-width: 160px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: normal;
+}
+
+/* ---------- Placement variants ---------- */
+
+.placeBottomStart {
+  top: calc(100% + 4px);
+  left: 0;
+}
+
+.placeBottomEnd {
+  top: calc(100% + 4px);
+  right: 0;
+}
+
+.placeTopStart {
+  bottom: calc(100% + 4px);
+  left: 0;
+}
+
+.placeTopEnd {
+  bottom: calc(100% + 4px);
+  right: 0;
+}

@@ -1,0 +1,66 @@
+/*
+ * global.css — Minimal CSS reset, body baseline, mono-family rule, and
+ * scrollbar styling for the Forjis Solid client.
+ *
+ * Consumes tokens from tokens.css (which MUST load first — enforced by the
+ * import order in main.tsx). Fonts.css MUST also load first so @font-face
+ * declarations are registered before the body inherits --font-sans.
+ * See design.md decision D-4.
+ */
+
+/* Box-sizing reset. Applies to every element plus its pseudo-elements. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Root reset. The app is a fixed-viewport IDE shell — scroll happens inside
+   panels, never on the document root. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Body baseline. Tokens from tokens.css drive every value here. */
+body {
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Mono family for code-ish content. Explicit class opt-in for non-code
+   elements that want the monospace aesthetic (e.g. pipeline role names). */
+code,
+pre,
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* Scrollbar styling ported from the reference stylesheet (styles.css lines
+   49-52). Transparent track, tokenised thumb with a matching border to the
+   base background so the thumb feels inset. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1f262e;
+  border-radius: 5px;
+  border: 2px solid var(--bg-base);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2b3440;
+}

@@ -1,0 +1,128 @@
+/*
+ * ToolCallBlock.module.css — Collapsible body for assistant tool-call rows.
+ *
+ * Mirrors the prototype's `.log-block.tool-call`, `.log-header-row`,
+ * `.log-preview`, `.log-full`, `.expand-btn` rules from
+ * `tasks/_redesign-assets/styles.css` (lines 528–601). The left-border accent
+ * is the green `--accent`-derived tone used for tool calls in the reference.
+ * Tokens come from `styles/tokens.css`.
+ */
+
+.block {
+  margin: 0 16px 6px;
+  border-left: 2px solid #2d6148;
+  padding-left: 12px;
+  position: relative;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 0;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.header:hover .chevron {
+  color: var(--text);
+}
+
+.chevron {
+  width: 10px;
+  height: 10px;
+  color: var(--text-mute);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+
+.chevron[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+.toolName {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+
+.timestamp {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mute);
+  flex-shrink: 0;
+}
+
+.body {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  position: relative;
+  margin-bottom: 0;
+}
+
+.preview {
+  /* Collapsed bodies share the same padding/colours as `.body`; the only
+     difference is the optional fade gradient via `.previewClipped::after`. */
+  position: relative;
+}
+
+.previewClipped::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 32px;
+  background: linear-gradient(to bottom, transparent, var(--bg-1));
+  pointer-events: none;
+  border-radius: 0 0 3px 3px;
+}
+
+.expandBtn {
+  margin-top: 4px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.expandBtn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--bg-1);
+}
+
+.results {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
