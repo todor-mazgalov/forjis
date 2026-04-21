@@ -98,6 +98,14 @@ export { readYamlFile, writeYamlFile, atomicWriteFile, ensureDir } from './state
 // -- Validation --
 export { isValidTaskId, assertValidTaskId } from './task-id.js';
 
+// -- Inspector session tokens --
+export {
+  generateSessionToken,
+  SessionTokenRegistry,
+  SessionTokenAlreadyRegisteredError,
+} from './session-token.js';
+export type { SessionMetadata } from './session-token.js';
+
 // -- Web service implementations --
 export { TaskServiceImpl } from './web-services/task-service.js';
 export { PlanServiceImpl } from './web-services/plan-service.js';

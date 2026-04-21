@@ -8,6 +8,7 @@
  * Both original packages re-export these types for backward compatibility.
  */
 
+import type { InspectorTransport } from './inspector-services.js';
 import type {
   TaskService,
   PlanService,
@@ -471,6 +472,44 @@ export interface ErrorResponse {
 
 // -- Server Options ---------------------------------------------------------
 
+/**
+ * Structural contract of the session-metadata record exposed via
+ * `SessionTokenRegistryLike.validate(...)`.
+ *
+ * Mirrors the concrete `SessionMetadata` interface exported from
+ * `@forjis/facilitator` (see `session-token.ts`). The facilitator package
+ * owns the implementation; this interface lives in `@forjis/shared` so the
+ * web server can consume the value without importing from facilitator,
+ * preserving the zero-dependency `shared → facilitator` acyclic constraint.
+ */
+export interface SessionMetadataLike {
+  /** Opaque label supplied by the caller at registration time (e.g. "forjis dev session"). */
+  readonly label: string;
+  /** ISO-8601 timestamp captured when the token was registered. */
+  readonly createdAt: string;
+}
+
+/**
+ * Structural contract of the Inspector session-token registry consumed by
+ * the web server's WebSocket upgrade listener.
+ *
+ * The concrete implementation lives in `@forjis/facilitator` as
+ * `SessionTokenRegistry`. Declaring only the `validate` method here keeps
+ * the surface minimal — the web server never needs `register`, `revoke`,
+ * or the `size` getter — and preserves the zero-dependency
+ * `shared → facilitator` acyclic constraint.
+ */
+export interface SessionTokenRegistryLike {
+  /**
+   * Validate a session token.
+   *
+   * @param token - Token value supplied by the upgrading client.
+   * @returns Metadata for the registered token, or `null` when the token
+   *   is unknown.
+   */
+  validate(token: string): SessionMetadataLike | null;
+}
+
 /** Options for creating the web server. */
 export interface WebServerOptions {
   /** Port to listen on. */
@@ -513,4 +552,23 @@ export interface WebServerOptions {
    *  consumers treat a missing value as "unknown project" and fall back
    *  to neutral defaults. */
   projectDir?: string;
+  /**
+   * Optional Inspector WebSocket transport wiring.
+   *
+   * When present, the caller has already constructed the transport via
+   * `createInspectorWebSocketServer(...)` and `createWebServer` will call
+   * `attachInspectorUpgradeListener(server, transport, { tokenRegistry })`
+   * before `server.listen(...)`, so the `/inspector/ws` endpoint is
+   * guaranteed to handle the very first client connection after `listen`.
+   *
+   * When absent, the server behaves exactly as today: no upgrade listener
+   * is installed, no WebSocket endpoint is exposed, and no `ws` runtime
+   * dependency is loaded.
+   */
+  inspector?: {
+    /** WebSocket-backed transport satisfying `InspectorTransport`. */
+    transport: InspectorTransport;
+    /** Per-session token registry used by the upgrade gate. */
+    tokenRegistry: SessionTokenRegistryLike;
+  };
 }
