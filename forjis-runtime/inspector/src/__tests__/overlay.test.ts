@@ -11,8 +11,17 @@
 import { jest } from '@jest/globals';
 import { Server } from 'mock-socket';
 import { mount } from '../mount.js';
+import {
+  __resetBatchStateForTests,
+} from '../queue/batch-state.js';
+import { __resetScreenTrackerForTests } from '../queue/screen-tracker.js';
 import { initOverlay } from '../ui/overlay.js';
 import { __resetModeForTests, getMode, setMode } from '../ui/mode.js';
+import {
+  __resetPickerToolForTests,
+  getTool,
+  setTool,
+} from '../ui/picker-tool.js';
 import { unmount } from '../unmount.js';
 
 const TEST_URL = 'ws://localhost:9997/inspector/ws';
@@ -56,6 +65,9 @@ describe('overlay integration through mount()', () => {
     document.head.innerHTML = '';
     sessionStorage.clear();
     __resetModeForTests();
+    __resetPickerToolForTests();
+    __resetBatchStateForTests();
+    __resetScreenTrackerForTests();
     server = new Server(TEST_URL);
   });
 
@@ -138,6 +150,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
     document.head.innerHTML = '';
     sessionStorage.clear();
     __resetModeForTests();
+    __resetPickerToolForTests();
     root = document.createElement('div');
     root.id = 'forjis-inspector-root';
     document.body.appendChild(root);
@@ -147,6 +160,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   afterEach(() => {
     sessionStorage.clear();
     __resetModeForTests();
+    __resetPickerToolForTests();
     if (root.parentNode) {
       root.parentNode.removeChild(root);
     }
@@ -341,6 +355,44 @@ describe('overlay via initOverlay directly (no transport)', () => {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onPick).not.toHaveBeenCalled();
   });
+
+  it('FR-010-033: region tool disables the element click path', () => {
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
+    setMode('inspect');
+    setTool('region');
+    const el = document.createElement('div');
+    el.id = 'should-not-pick';
+    document.body.appendChild(el);
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(onPick).not.toHaveBeenCalled();
+    overlay.destroy();
+  });
+
+  it('FR-010-033 / D-004: toggle button renders segmented control with Element and Region segments', () => {
+    initOverlay({ root, onPick, onSubmitPin: jest.fn() });
+    const elementBtn = root.shadowRoot?.querySelector(
+      'button[data-forjis-role="tool-element"]',
+    );
+    const regionBtn = root.shadowRoot?.querySelector(
+      'button[data-forjis-role="tool-region"]',
+    );
+    expect(elementBtn).not.toBeNull();
+    expect(regionBtn).not.toBeNull();
+    // Tool segments hidden while inspect is OFF.
+    expect(elementBtn?.getAttribute('data-visible')).toBe('false');
+    expect(regionBtn?.getAttribute('data-visible')).toBe('false');
+    setMode('inspect');
+    expect(elementBtn?.getAttribute('data-visible')).toBe('true');
+    expect(regionBtn?.getAttribute('data-visible')).toBe('true');
+    // aria-pressed reflects default tool.
+    expect(elementBtn?.getAttribute('aria-pressed')).toBe('true');
+    expect(regionBtn?.getAttribute('aria-pressed')).toBe('false');
+    (regionBtn as HTMLButtonElement).click();
+    expect(getTool()).toBe('region');
+    expect(regionBtn?.getAttribute('aria-pressed')).toBe('true');
+    expect(elementBtn?.getAttribute('aria-pressed')).toBe('false');
+  });
 });
 
 describe('overlay teardown via mount()/unmount()', () => {
@@ -351,6 +403,9 @@ describe('overlay teardown via mount()/unmount()', () => {
     document.head.innerHTML = '';
     sessionStorage.clear();
     __resetModeForTests();
+    __resetPickerToolForTests();
+    __resetBatchStateForTests();
+    __resetScreenTrackerForTests();
     server = new Server(TEST_URL);
   });
 

@@ -1,20 +1,28 @@
 /**
  * Comment sheet factory.
  *
- * The comment sheet (design.md §D-007, spec FR-009-005) is a drawer hosted
- * inside the overlay's existing shadow root for style isolation. It renders
- * the element screenshot, the viewport screenshot with an annotation canvas
- * layered over it, a comment textarea, and Send / Cancel controls. Desktop
- * (≥768 px): right-side drawer (~400 px). Mobile: full-width bottom sheet.
+ * The comment sheet (design.md §D-007, spec FR-009-005, FR-010-016..018)
+ * is a drawer hosted inside the overlay's existing shadow root for style
+ * isolation. It renders the element screenshot, the viewport screenshot
+ * with an annotation canvas layered over it, a comment textarea, and
+ * Send / Cancel / "Add another pin" controls. Desktop (>=768 px):
+ * right-side drawer (~400 px). Mobile: full-width bottom sheet.
  *
- * Lifecycle: constructed once by the overlay and reused across picks. Each
- * `open(context)` mounts a fresh `AnnotationCanvasHandle` and swaps in new
- * screenshot object URLs. `close()` destroys the annotation canvas, revokes
- * the object URLs, and hides the drawer. `destroy()` removes all DOM.
+ * Lifecycle: constructed once by the overlay and reused across picks.
+ * Each `open(context)` mounts a fresh annotation canvas and swaps in new
+ * screenshot object URLs. `hide()` preserves in-memory state (textarea,
+ * annotation handle, elementUrl list) so "Add another pin" can re-arm
+ * picker mode without losing work. `addPinToGroup(context)` appends a
+ * new pin to the in-flight group — it shares the annotation handle and
+ * textarea buffer and allocates a fresh `commentGroupId` UUID on the
+ * solo→group transition. `close()` destroys the annotation canvas,
+ * revokes every collected `elementUrl`, and hides the drawer. `destroy()`
+ * removes all DOM.
  */
 
 import type { Annotation, Bbox, Pin, PinTarget } from '@forjis/shared';
 import { buildPin } from '../pipeline.js';
+import { generateUuid } from '../util/uuid.js';
 import {
   createAnnotationCanvas,
   type AnnotationCanvasHandle,
@@ -24,24 +32,33 @@ import {
 export interface InitCommentSheetOptions {
   /** The overlay's open shadow root; the sheet appends itself here. */
   readonly shadow: ShadowRoot;
-  /** Called with the finalized `Pin` when the user clicks Send. */
+  /** Called once per pin when the user clicks Send. */
   readonly onSubmit: (pin: Pin) => void;
   /** Called when the user clicks Cancel or the backdrop. */
   readonly onCancel: () => void;
+  /**
+   * Called when the user taps "Add another pin". The caller is expected
+   * to re-arm picker mode; the sheet handles its own `hide()`.
+   */
+  readonly onAddAnotherPin: () => void;
 }
 
-/** Context supplied to {@link CommentSheetHandle.open}. */
+/** Context supplied to {@link CommentSheetHandle.open} / {@link CommentSheetHandle.addPinToGroup}. */
 export interface CommentSheetContext {
   /** `PinTarget` emitted by the overlay at pick time. */
   readonly target: PinTarget;
-  /** Cropped element screenshot Blob. */
+  /** Cropped element/region screenshot Blob. */
   readonly elementBlob: Blob;
   /** Viewport screenshot Blob (used as annotation background). */
   readonly viewportBlob: Blob;
-  /** Pin bbox in viewport-pixel coordinates (also drawn on the viewport PNG). */
+  /** Pin bbox in viewport-pixel coordinates (drawn on the viewport PNG). */
   readonly bbox: Bbox;
   /** Curated computed-styles snapshot taken synchronously at pick time. */
   readonly computedStyles: Record<string, string>;
+  /** Screen pathname captured at pick time via the screen tracker. */
+  readonly screen: string | null;
+  /** Optional pre-allocated commentGroupId (first pick of an ongoing group). */
+  readonly commentGroupId?: string | null;
 }
 
 /** Handle returned by {@link createCommentSheet}. */
@@ -50,6 +67,16 @@ export interface CommentSheetHandle {
   readonly element: HTMLElement;
   /** Populate the sheet with a new capture bundle and make it visible. */
   open(context: CommentSheetContext): void;
+  /** Hide the sheet without destroying in-memory state. */
+  hide(): void;
+  /** Whether the sheet is currently open (with in-memory state). */
+  isOpen(): boolean;
+  /**
+   * Append a new pin to the in-flight group and re-show the sheet.
+   *
+   * @param context - Capture context for the new pin.
+   */
+  addPinToGroup(context: CommentSheetContext): void;
   /** Hide the sheet and tear down per-open state. Idempotent. */
   close(): void;
   /** Remove the sheet from the DOM and release references. */
@@ -90,6 +117,18 @@ const COMMENT_SHEET_STYLE = `
   margin: 0;
   font-size: 16px;
 }
+.comment-sheet-panel .group-count {
+  margin-left: 8px;
+  padding: 2px 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.comment-sheet-panel .group-count[data-visible="false"] {
+  display: none;
+}
 .comment-sheet-panel button {
   font: inherit;
   cursor: pointer;
@@ -97,6 +136,7 @@ const COMMENT_SHEET_STYLE = `
   border: 1px solid #d1d5db;
   background: #f9fafb;
   padding: 6px 12px;
+  min-height: 28px;
 }
 .comment-sheet-panel button.primary {
   background: #2563eb;
@@ -142,6 +182,7 @@ footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
 }
 @media (min-width: 768px) {
   .comment-sheet-panel {
@@ -171,7 +212,9 @@ interface SheetDom {
   viewportSurface: HTMLElement;
   textarea: HTMLTextAreaElement;
   cancelBtn: HTMLButtonElement;
+  addAnotherBtn: HTMLButtonElement;
   sendBtn: HTMLButtonElement;
+  groupCount: HTMLSpanElement;
 }
 
 /**
@@ -196,9 +239,16 @@ function buildSheetDom(): SheetDom {
   panel.setAttribute('aria-label', 'Forjis pin comment');
   root.appendChild(panel);
   const header = document.createElement('header');
+  const titleWrap = document.createElement('div');
   const title = document.createElement('h2');
   title.textContent = 'New pin';
-  header.appendChild(title);
+  titleWrap.appendChild(title);
+  const groupCount = document.createElement('span');
+  groupCount.className = 'group-count';
+  groupCount.setAttribute('data-visible', 'false');
+  groupCount.textContent = '';
+  titleWrap.appendChild(groupCount);
+  header.appendChild(titleWrap);
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.dataset.action = 'close';
@@ -227,6 +277,12 @@ function buildSheetDom(): SheetDom {
   cancelBtn.dataset.action = 'cancel';
   cancelBtn.textContent = 'Cancel';
   footer.appendChild(cancelBtn);
+  const addAnotherBtn = document.createElement('button');
+  addAnotherBtn.type = 'button';
+  addAnotherBtn.dataset.action = 'add-another';
+  addAnotherBtn.setAttribute('aria-label', 'Add another pin to this comment');
+  addAnotherBtn.textContent = 'Add another pin';
+  footer.appendChild(addAnotherBtn);
   const sendBtn = document.createElement('button');
   sendBtn.type = 'button';
   sendBtn.dataset.action = 'send';
@@ -234,23 +290,51 @@ function buildSheetDom(): SheetDom {
   sendBtn.textContent = 'Send';
   footer.appendChild(sendBtn);
   panel.appendChild(footer);
-  return { root, backdrop, closeBtn, elementImg, viewportSurface, textarea, cancelBtn, sendBtn };
+  return {
+    root,
+    backdrop,
+    closeBtn,
+    elementImg,
+    viewportSurface,
+    textarea,
+    cancelBtn,
+    addAnotherBtn,
+    sendBtn,
+    groupCount,
+  };
 }
 
 /** Mutable per-open state torn down by `close()`. */
 interface OpenState {
-  context: CommentSheetContext;
+  groupPins: Array<{
+    context: CommentSheetContext;
+    elementUrl: string;
+  }>;
   annotationHandle: AnnotationCanvasHandle;
-  elementUrl: string;
+  commentGroupId: string | null;
+  textareaBuffer: string;
 }
 
 /**
- * Build a comment sheet, mount it into `opts.shadow`, and wire Send / Cancel
- * behavior. The sheet starts hidden; `open(context)` reveals it.
+ * Update the header's `N pins` badge based on the current group size.
  *
- * Send: collects `comment` + `annotations`, calls `buildPin`, fires
- * `opts.onSubmit(pin)`, closes. Cancel (button or backdrop): fires
- * `opts.onCancel()`, closes.
+ * @param dom - Sheet DOM.
+ * @param count - Total pins collected in the active group.
+ */
+function syncGroupCount(dom: SheetDom, count: number): void {
+  if (count > 1) {
+    dom.groupCount.textContent = String(count) + ' pins';
+    dom.groupCount.setAttribute('data-visible', 'true');
+    return;
+  }
+  dom.groupCount.textContent = '';
+  dom.groupCount.setAttribute('data-visible', 'false');
+}
+
+/**
+ * Build a comment sheet, mount it into `opts.shadow`, and wire Send /
+ * Cancel / "Add another pin" behavior. The sheet starts hidden;
+ * `open(context)` reveals it.
  *
  * @param opts - Init options.
  * @returns A {@link CommentSheetHandle}.
@@ -265,14 +349,16 @@ export function createCommentSheet(
   let sendInFlight = false;
 
   const closeInternal = (): void => {
+    dom.root.setAttribute('data-open', 'false');
     if (!openState) {
-      dom.root.setAttribute('data-open', 'false');
       return;
     }
-    dom.root.setAttribute('data-open', 'false');
     openState.annotationHandle.destroy();
-    URL.revokeObjectURL(openState.elementUrl);
+    for (const entry of openState.groupPins) {
+      URL.revokeObjectURL(entry.elementUrl);
+    }
     openState = null;
+    syncGroupCount(dom, 0);
   };
 
   const cancel = (): void => {
@@ -283,21 +369,78 @@ export function createCommentSheet(
     closeInternal();
   };
 
+  const hide = (): void => {
+    if (!openState) {
+      dom.root.setAttribute('data-open', 'false');
+      return;
+    }
+    openState.textareaBuffer = dom.textarea.value;
+    dom.root.setAttribute('data-open', 'false');
+  };
+
+  const addPinToGroup = (context: CommentSheetContext): void => {
+    if (!openState) {
+      return;
+    }
+    if (openState.commentGroupId === null) {
+      openState.commentGroupId =
+        context.commentGroupId ?? generateUuid();
+    }
+    const elementUrl = URL.createObjectURL(context.elementBlob);
+    openState.groupPins.push({ context, elementUrl });
+    dom.elementImg.src = elementUrl;
+    dom.textarea.value = openState.textareaBuffer;
+    syncGroupCount(dom, openState.groupPins.length);
+    dom.root.setAttribute('data-open', 'true');
+  };
+
+  const handleAddAnother = (): void => {
+    if (!openState) {
+      return;
+    }
+    if (openState.commentGroupId === null) {
+      openState.commentGroupId = generateUuid();
+    }
+    opts.onAddAnotherPin();
+    hide();
+  };
+
+  const sendOne = async (
+    entry: { context: CommentSheetContext; elementUrl: string },
+    comment: string,
+    annotations: Annotation[],
+    commentGroupId: string | null,
+  ): Promise<void> => {
+    const pin = await buildPin(
+      entry.context.target,
+      comment,
+      annotations,
+      {
+        elementPng: entry.context.elementBlob,
+        viewportPng: entry.context.viewportBlob,
+        computedStyles: entry.context.computedStyles,
+      },
+      {
+        commentGroupId,
+        screen: entry.context.screen,
+      },
+    );
+    opts.onSubmit(pin);
+  };
+
   const send = async (): Promise<void> => {
     if (!openState || sendInFlight) {
       return;
     }
     sendInFlight = true;
-    const ctx = openState.context;
     const comment = dom.textarea.value;
     const annotations: Annotation[] = openState.annotationHandle.getAnnotations();
+    const commentGroupId = openState.commentGroupId;
+    const entries = openState.groupPins.slice();
     try {
-      const pin = await buildPin(ctx.target, comment, annotations, {
-        elementPng: ctx.elementBlob,
-        viewportPng: ctx.viewportBlob,
-        computedStyles: ctx.computedStyles,
-      });
-      opts.onSubmit(pin);
+      for (const entry of entries) {
+        await sendOne(entry, comment, annotations.slice(), commentGroupId);
+      }
       closeInternal();
     } finally {
       sendInFlight = false;
@@ -307,6 +450,7 @@ export function createCommentSheet(
   dom.closeBtn.addEventListener('click', cancel);
   dom.cancelBtn.addEventListener('click', cancel);
   dom.backdrop.addEventListener('click', cancel);
+  dom.addAnotherBtn.addEventListener('click', handleAddAnother);
   dom.sendBtn.addEventListener('click', () => {
     void send();
   });
@@ -332,9 +476,20 @@ export function createCommentSheet(
         backgroundBlob: context.viewportBlob,
       });
       dom.viewportSurface.appendChild(annotationHandle.element);
-      openState = { context, annotationHandle, elementUrl };
+      openState = {
+        groupPins: [{ context, elementUrl }],
+        annotationHandle,
+        commentGroupId: context.commentGroupId ?? null,
+        textareaBuffer: '',
+      };
+      syncGroupCount(dom, 1);
       dom.root.setAttribute('data-open', 'true');
     },
+    hide,
+    isOpen() {
+      return openState !== null;
+    },
+    addPinToGroup,
     close() {
       closeInternal();
     },

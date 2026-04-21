@@ -13,6 +13,8 @@
  */
 
 import type { Annotation, Pin, PinCapture, PinTarget } from '@forjis/shared';
+import { getCurrentScreen } from './queue/screen-tracker.js';
+import { generateUuid } from './util/uuid.js';
 
 /** Blob + computed-styles bundle consumed by {@link buildPin}. */
 export interface BuildPinBlobs {
@@ -53,39 +55,61 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 }
 
 /**
- * Produce a fresh identifier for the pin.
+ * Optional caller-supplied overrides threaded through {@link buildPin}.
  *
- * Mirrors `transport.ts`'s `generateClientId` pattern (design.md §D-008):
- * prefer `crypto.randomUUID()` when available, otherwise fall back to an
- * RFC4122 v4 UUID built from `Math.random`. Duplicate inlined rather than
- * extracted to a shared util until a third caller appears.
- *
- * @returns Non-empty UUID string.
+ * `commentGroupId` defaults to `null` when omitted; the comment-sheet
+ * populates it with a shared v4 UUID when pins are collected under the
+ * "Add another pin" multi-pin flow. `screen` defaults to the screen
+ * tracker's `getCurrentScreen()` value captured at pick time (not at Send
+ * time) — the sheet threads the pick-time screen through on Send so the
+ * pin's `screen` reflects the route the user was on when the pin was
+ * drawn, even if the user navigated before pressing Send.
  */
-function generateId(): string {
-  const g = globalThis as { crypto?: { randomUUID?: () => string } };
-  if (g.crypto && typeof g.crypto.randomUUID === 'function') {
-    return g.crypto.randomUUID();
+export interface BuildPinOptions {
+  /** Shared multi-pin group identifier, or `null` for solo pins. */
+  readonly commentGroupId?: string | null;
+  /** Screen pathname captured at pick time; falls back to the tracker. */
+  readonly screen?: string | null;
+}
+
+/**
+ * Resolve the `pin.screen` value, preferring explicit caller overrides.
+ *
+ * Precedence: `opts.screen` (supplied explicitly) → `getCurrentScreen()`
+ * from the screen tracker → `window.location.pathname`. The final fallback
+ * fires only when the tracker was never initialized (test environments;
+ * FR-010-031 "If the tracker is not initialized, `pin.screen` MUST equal
+ * `window.location.pathname`").
+ *
+ * @param opts - Optional override bag.
+ * @returns The resolved screen pathname or `null`.
+ */
+function resolveScreen(opts: BuildPinOptions | undefined): string | null {
+  if (opts && opts.screen !== undefined) {
+    return opts.screen;
   }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  const tracked = getCurrentScreen();
+  if (tracked !== null) {
+    return tracked;
+  }
+  return window.location.pathname;
 }
 
 /**
  * Build a `Pin` from the captured evidence bundle. Fixed fields are:
- * `platform = "web"`, `screen = location.pathname` (read at call time),
- * `parentPinId = null`, `createdAt = new Date().toISOString()`, and
- * `id = generateId()`. The two PNG blobs are base64-encoded via FileReader.
- * The computed-styles record is JSON-stringified. Annotations are shallow-
- * copied so a later mutation of the caller's array cannot corrupt the pin.
+ * `platform = "web"`, `parentPinId = null`,
+ * `createdAt = new Date().toISOString()`, and `id = generateUuid()`. The
+ * two PNG blobs are base64-encoded via FileReader. The computed-styles
+ * record is JSON-stringified. Annotations are shallow-copied so a later
+ * mutation of the caller's array cannot corrupt the pin. `screen` and
+ * `commentGroupId` come from `opts` (see {@link BuildPinOptions}) and
+ * default to the screen tracker's value and `null` respectively.
  *
  * @param target - `PinTarget` produced by the overlay at pick time.
  * @param comment - Free-text comment from the sheet's textarea.
  * @param annotations - Annotations drawn on the viewport thumbnail.
  * @param blobs - Element/viewport PNG blobs and the computed-styles snapshot.
+ * @param opts - Optional overrides for `commentGroupId` and `screen`.
  * @returns Promise resolving to a wire-valid `Pin`.
  */
 export async function buildPin(
@@ -93,6 +117,7 @@ export async function buildPin(
   comment: string,
   annotations: Annotation[],
   blobs: BuildPinBlobs,
+  opts?: BuildPinOptions,
 ): Promise<Pin> {
   const elementScreenshot = await blobToDataUrl(blobs.elementPng);
   const viewportScreenshot = await blobToDataUrl(blobs.viewportPng);
@@ -103,14 +128,15 @@ export async function buildPin(
     annotations: annotations.slice(),
   };
   const pin: Pin = {
-    id: generateId(),
+    id: generateUuid(),
     platform: 'web',
-    screen: window.location.pathname,
+    screen: resolveScreen(opts),
     target,
     capture,
     comment,
     createdAt: new Date().toISOString(),
     parentPinId: null,
+    commentGroupId: opts?.commentGroupId ?? null,
   };
   return pin;
 }

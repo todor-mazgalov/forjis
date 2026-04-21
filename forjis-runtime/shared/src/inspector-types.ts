@@ -158,6 +158,16 @@ export interface Pin {
   createdAt: string;
   /** Parent pin identifier when this pin is a reply; `null` for root pins. */
   parentPinId: string | null;
+  /**
+   * Grouping identifier shared by pins that were collected under one comment
+   * via the SDK's "Add another pin" flow. `null` for solo pins. Pins that
+   * carry the same non-null `commentGroupId` share comment text and
+   * annotations but have distinct `target` / `capture` / `id` values.
+   *
+   * Additive extension added in task inspector-010. Because the change is
+   * additive, `PROTOCOL_VERSION` remains `"forjis-inspector/1.0"`.
+   */
+  commentGroupId: string | null;
 }
 
 /**
