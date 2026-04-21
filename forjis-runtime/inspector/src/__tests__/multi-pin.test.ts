@@ -200,6 +200,13 @@ describe('multi-pin flow', () => {
     // Pin screens preserve pick-time values (FR-010-031).
     expect(submitted[0].screen).toBe('/a');
     expect(submitted[1].screen).toBe('/b');
+    // FR-010-018 annotations parity: both pins carry an annotations array
+    // (JSON-string deep-equal covers the empty-array baseline from the
+    // stubbed canvas as well as any future non-empty case the sheet
+    // snapshots once and slices into each pin).
+    expect(submitted[0].capture.annotations).toEqual(
+      submitted[1].capture.annotations,
+    );
     handle.destroy();
   });
 
