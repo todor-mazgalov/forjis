@@ -251,10 +251,9 @@ Log each invocation: `> [<agent-name>] iteration/cycle N`
 ### Load Event Injection
 
 For every agent invoked, append the **Load Event Injection** template from
-`forjis-workflow/SKILL.md` as the final section of the composed prompt
-(after all constraints). For org-enriched agents, `<SLUG>` is the lowercase
-`<team>-<role>` pair from the org file. For `--raw` mode, the team is
-`default` and the role is the agent stage name.
+`forjis-workflow/SKILL.md` (after all constraints). `<SLUG>` is the lowercase
+kebab of `<org>-<team>-<role>`. In `--raw` mode use `default` for org and
+team, and the agent stage name as role.
 
 ### Git Behavior
 

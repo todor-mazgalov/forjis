@@ -57,6 +57,27 @@
   opacity: 0.65;
 }
 
+/* Unresolved treatment — orchestrator wrote a role not in the resolved
+   config (e.g. the system `Setup` agent). Warning-tinted dashed border so
+   the drift is visible without derailing the pipeline. */
+.cardUnresolved {
+  border-style: dashed;
+  border-color: var(--warning, #d97706);
+  background-color: rgba(217, 119, 6, 0.06);
+}
+
+.warningBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 4px;
+  font-size: var(--text-xs);
+  line-height: 1;
+  color: var(--warning, #d97706);
+  cursor: help;
+}
+
 /* ---------- Select button (header + score region) ---------- */
 
 .selectButton {

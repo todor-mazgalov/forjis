@@ -227,6 +227,80 @@ describe('syncPlanFromState — cross-team role support', () => {
     expect(custom.plugin).toBeUndefined();
   });
 
+  it('marks a role missing from the resolved config as kind:unresolved with a warning', async () => {
+    await writePipelineState(projectDir, taskId, {
+      org: 'forjis',
+      team: 'Backend',
+      status: 'running',
+      roles: [
+        {
+          name: 'Setup',
+          agent: 'forjis-setup',
+          status: 'planned',
+          description: 'System agent the orchestrator should not have listed',
+          weight: 100,
+        },
+        {
+          name: 'APIDev',
+          agent: 'forjis-api-developer',
+          status: 'planned',
+          description: 'Real backend role',
+          weight: 95,
+        },
+      ],
+    });
+
+    await syncPlanFromState(projectDir, taskId, makeCrossTeamConfig());
+    const plan = await readPipelinePlan(projectDir, taskId);
+
+    const setup = plan.steps.find((s) => s.role === 'Setup')!;
+    expect(setup.kind).toBe('unresolved');
+    expect(setup.warning).toContain('Setup');
+    expect(setup.warning).toContain('not in the resolved config');
+
+    // Resolved role is untouched.
+    const apiDev = plan.steps.find((s) => s.role === 'APIDev')!;
+    expect(apiDev.kind).not.toBe('unresolved');
+    expect(apiDev.warning).toBeUndefined();
+
+    // Dependency chain skips the unresolved step — APIDev's deps should
+    // point to the nearest resolved predecessor (orchestrator synthetic node)
+    // rather than to the unresolved `Setup` entry.
+    expect(apiDev.deps).not.toContain('Setup');
+  });
+
+  it('parsePipelinePlan tolerates unresolved steps without throwing', async () => {
+    await writePipelineState(projectDir, taskId, {
+      org: 'forjis',
+      team: 'Backend',
+      status: 'running',
+      roles: [
+        {
+          name: 'Setup',
+          agent: 'forjis-setup',
+          status: 'planned',
+          description: 'System agent',
+          weight: 100,
+        },
+        {
+          name: 'APIDev',
+          agent: 'forjis-api-developer',
+          status: 'planned',
+          description: 'Real backend role',
+          weight: 95,
+        },
+      ],
+    });
+
+    await syncPlanFromState(projectDir, taskId, makeCrossTeamConfig());
+    const resolved = await parsePipelinePlan(projectDir, taskId, makeCrossTeamConfig());
+
+    // parsePipelinePlan skips orchestrator + unresolved; only APIDev remains.
+    expect(resolved).not.toBeNull();
+    expect(resolved).toHaveLength(1);
+    expect(resolved![0].step.role).toBe('APIDev');
+  });
+
   it('falls back to state.team when a role omits the per-role override (same-team case unaffected)', async () => {
     await writePipelineState(projectDir, taskId, {
       org: 'forjis',

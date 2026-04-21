@@ -159,10 +159,18 @@ export interface PipelineStep {
    *  absent or empty means this step is a root in the dependency graph. */
   deps?: string[];
   /** Discriminator: `orchestrator` for the synthetic head node injected by
-   *  plan-writer; `role` (default) for normal pipeline-state.yaml roles.
-   *  Absent on historical pipeline-plan.yaml — readers MUST treat absence
-   *  as `role`. */
-  kind?: 'orchestrator' | 'role';
+   *  plan-writer; `unresolved` for a role entry the orchestrator wrote to
+   *  pipeline-state.yaml whose `(org, team, role)` triple does not exist in
+   *  the resolved config (e.g. a system agent like `Setup` or a typo). These
+   *  steps are kept in the plan for dashboard visibility with a `warning:`
+   *  field, but the strict plan parser and runtime dispatcher skip them;
+   *  `role` (default) for normal pipeline-state.yaml roles. Absent on
+   *  historical pipeline-plan.yaml — readers MUST treat absence as `role`. */
+  kind?: 'orchestrator' | 'unresolved' | 'role';
+  /** Human-readable warning attached to a step that was flagged during plan
+   *  sync (e.g. unresolved role, identity drift). Rendered with a warning
+   *  indicator in the UI; absent on normal steps. */
+  warning?: string;
 }
 
 // -- Resource DTOs ----------------------------------------------------------

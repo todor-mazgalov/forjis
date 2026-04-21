@@ -250,16 +250,27 @@ function computeStepTimings(
  * Detects status transitions between syncs and records startedAt/completedAt
  * timestamps on each step. Previously recorded timestamps are preserved.
  *
+ * When `config` is provided, each role's `(org, team, role)` triple is
+ * looked up in the resolved config. Roles with no matching `RuntimeRole`
+ * (e.g. the system `Setup` agent that lives outside orgs.yaml, or a typo)
+ * are written with `kind: 'unresolved'` and a `warning:` field so the
+ * dashboard surfaces them visibly instead of failing the whole task. The
+ * strict plan parser skips these on read. When `config` is omitted (older
+ * callers and tests), every role is written as-is; the existing
+ * parse-on-poll path then catches drift.
+ *
  * Returns true if the plan was updated, false if pipeline-state.yaml
  * doesn't exist yet.
  *
  * @param projectDir - The root directory of the target project.
  * @param taskId - The task identifier.
+ * @param config - Optional runtime config for unresolved-role detection.
  * @returns True if the plan was synced from state.
  */
 export async function syncPlanFromState(
   projectDir: string,
   taskId: string,
+  config?: RuntimeConfig,
 ): Promise<boolean> {
   const statePath = join(projectDir, '.forjis', 'tasks', taskId, 'pipeline-state.yaml');
   const state = await readYamlFile<PipelineState>(statePath);
@@ -276,13 +287,23 @@ export async function syncPlanFromState(
     const previous = existingData.get(role.name);
     const timings = computeStepTimings(role.status, previous);
 
+    const org = role.org ?? state.org ?? '';
+    const team = role.team ?? state.team ?? '';
+
+    // When config is provided, probe for the role's identity; a miss means
+    // the orchestrator added a role outside the resolved config (commonly
+    // `Setup`, which is a system agent). Keep the step for visibility but
+    // mark it unresolved so the parser skips it and the UI can warn.
+    const unresolved =
+      config !== undefined && findRuntimeRole(config, { org, team, role: role.name }) === null;
+
     const step: PipelineStep = {
       // Three separate identity fields — never a composite string. The plan
       // parser in this module and the strict orchestrator contract both
       // depend on this layout. Per-role `org`/`team` overrides (for cross-
       // team pulls) take precedence over the pipeline's primary org/team.
-      org: role.org ?? state.org ?? '',
-      team: role.team ?? state.team ?? '',
+      org,
+      team,
       role: role.name,
       ...(role.plugin ? { plugin: role.plugin } : {}),
       agent: role.agent,
@@ -292,6 +313,14 @@ export async function syncPlanFromState(
       decision: role.decision ?? 'pending',
       justification: role.justification ?? '',
     };
+
+    if (unresolved) {
+      step.kind = 'unresolved';
+      step.warning =
+        `Role (${org}, ${team}, ${role.name}) is not in the resolved config — ` +
+        `the orchestrator included a role that orgs.yaml does not declare ` +
+        `(a system agent like Setup, or a typo). This step was dropped from execution.`;
+    }
 
     if (timings.startedAt) {
       step.startedAt = timings.startedAt;
@@ -309,11 +338,20 @@ export async function syncPlanFromState(
     return step;
   });
 
-  // Phase C1: linear-chain `deps` derivation. Pipeline-state.yaml is in
-  // pipeline-stage order; emit `deps: [previousStep.role]` for every
-  // non-first role-derived step.
-  for (let i = 1; i < roleSteps.length; i++) {
-    roleSteps[i].deps = [roleSteps[i - 1].role];
+  // Phase C1: linear-chain `deps` derivation, skipping `unresolved` steps so
+  // executable roles never depend on a non-runnable ghost entry. Each
+  // resolved step depends on the nearest preceding resolved step; unresolved
+  // steps are left without `deps` so the dashboard can render them as
+  // informational.
+  let lastResolvedRole: string | null = null;
+  for (const step of roleSteps) {
+    if (step.kind === 'unresolved') {
+      continue;
+    }
+    if (lastResolvedRole !== null) {
+      step.deps = [lastResolvedRole];
+    }
+    lastResolvedRole = step.role;
   }
 
   // Phase C2: prepend a synthetic orchestrator step. The orchestrator is
@@ -468,7 +506,11 @@ export async function parsePipelinePlan(
 
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i];
-    if (step.kind === 'orchestrator') {
+    // Synthetic `orchestrator` and flagged `unresolved` steps have no
+    // real identity to validate — skip them. Unresolved steps were
+    // already annotated with a `warning:` by `syncPlanFromState` and
+    // surface in the dashboard without blocking the pipeline.
+    if (step.kind === 'orchestrator' || step.kind === 'unresolved') {
       continue;
     }
     const identity: RoleIdentity = {
