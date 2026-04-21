@@ -12,7 +12,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
 
-import { ensureDir, atomicWriteFile, readYamlFile, writeYamlFile } from '../state.js';
+import {
+  ensureDir,
+  atomicWriteFile,
+  atomicWriteFileBinary,
+  readYamlFile,
+  writeYamlFile,
+} from '../state.js';
 
 async function createTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'forjis-state-test-'));
@@ -89,6 +95,45 @@ describe('atomicWriteFile', () => {
     await atomicWriteFile(filePath, 'updated');
     const content = await readFile(filePath, 'utf-8');
     expect(content).toBe('updated');
+  });
+});
+
+// --------------------------------------------------------------------------
+// atomicWriteFileBinary
+// --------------------------------------------------------------------------
+
+describe('atomicWriteFileBinary', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await createTempDir();
+  });
+
+  afterEach(async () => {
+    await removeTempDir(tmpDir);
+  });
+
+  /** Validates: binary writes preserve non-UTF-8 bytes exactly. */
+  it('round-trips a non-UTF-8 Buffer byte-for-byte', async () => {
+    const filePath = join(tmpDir, 'binary.bin');
+    // Bytes that are intentionally NOT valid UTF-8: a lone continuation byte
+    // (0x80), the 0xFF byte (never legal in UTF-8), and an embedded NUL.
+    const payload = Buffer.from([0x00, 0x01, 0x80, 0xff, 0x7f, 0xc3, 0x28, 0xfe]);
+
+    await atomicWriteFileBinary(filePath, payload);
+
+    const readBack = await readFile(filePath);
+    expect(readBack.equals(payload)).toBe(true);
+  });
+
+  it('leaves no .tmp files after successful binary write', async () => {
+    const filePath = join(tmpDir, 'clean.bin');
+    await atomicWriteFileBinary(filePath, Buffer.from([1, 2, 3, 4]));
+
+    const { readdir } = await import('node:fs/promises');
+    const entries = await readdir(tmpDir);
+    const tmpFiles = entries.filter(e => e.includes('.tmp.'));
+    expect(tmpFiles).toHaveLength(0);
   });
 });
 

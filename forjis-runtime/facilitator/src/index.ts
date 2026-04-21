@@ -93,7 +93,7 @@ export { getCurrentStage } from './task-state.js';
 export { renderStatus } from './display.js';
 
 // -- State utilities --
-export { readYamlFile, writeYamlFile, atomicWriteFile, ensureDir } from './state.js';
+export { readYamlFile, writeYamlFile, atomicWriteFile, atomicWriteFileBinary, ensureDir } from './state.js';
 
 // -- Validation --
 export { isValidTaskId, assertValidTaskId } from './task-id.js';
@@ -113,6 +113,9 @@ export { EventServiceImpl } from './web-services/event-service.js';
 export { ResourceServiceImpl } from './web-services/resource-service.js';
 export { FileServiceImpl } from './web-services/file-service.js';
 export { ManifestServiceImpl } from './web-services/manifest-service.js';
+export { InspectorServiceImpl, ConcurrentBatchError } from './web-services/inspector-service.js';
+export type { InspectorServiceOptions } from './web-services/inspector-service.js';
+export { wireInspectorMessagePump } from './web-services/inspector-message-pump.js';
 export { RuntimeServiceImpl } from './web-services/runtime-service.js';
 export type { WorkerStateRef } from './web-services/runtime-service.js';
 export { writePipelinePlan, syncPlanFromState, syncBranchesFromState, forcePlanReady, getRunningRole, parsePipelinePlan, PlanRoleNotFoundError } from './web-services/plan-writer.js';
