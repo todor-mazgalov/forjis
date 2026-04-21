@@ -609,7 +609,11 @@ function mergeMetrics(plugins: PluginDef[]): Map<string, MetricDef> {
   return merged;
 }
 
-/** Converts plugin orgs into RuntimeOrg structures with scoped role names. */
+/** Converts plugin orgs into RuntimeOrg structures with bare role names plus a
+ *  separate `plugin` field. The previous composite `plugin:role` name form has
+ *  been replaced by two independent fields so every downstream file
+ *  (pipeline-state.yaml, pipeline-plan.yaml) can use bare role identifiers
+ *  without embedding the reserved `:` character. */
 function mergePluginOrgs(plugins: PluginDef[]): RuntimeOrg[] {
   const result: RuntimeOrg[] = [];
 
@@ -618,7 +622,8 @@ function mergePluginOrgs(plugins: PluginDef[]): RuntimeOrg[] {
       const teams: RuntimeTeam[] = org.teams.map(team => ({
         name: team.name,
         roles: team.roles.map(role => ({
-          name: `${plugin.name}:${role.name}`,
+          name: role.name,
+          plugin: plugin.name,
           // `org` and `team` are populated by finaliseRuntimeOrgs() once
           // composition is complete; keeping placeholders here lets every
           // intermediate copy/override helper stay unchanged.
@@ -764,6 +769,7 @@ function deepCopyTeam(team: RuntimeTeam): RuntimeTeam {
     name: team.name,
     roles: team.roles.map(role => ({
       name: role.name,
+      ...(role.plugin ? { plugin: role.plugin } : {}),
       org: role.org,
       team: role.team,
       agent: role.agent,
@@ -798,6 +804,7 @@ function applyUserTeamRoles(
         const base = team.roles[idx];
         team.roles[idx] = {
           name: userRole.name,
+          ...(base.plugin ? { plugin: base.plugin } : {}),
           org: base.org,
           team: base.team,
           agent: userRole.agent ?? base.agent,
@@ -817,6 +824,7 @@ function applyUserTeamRoles(
         const base = team.roles[idx];
         team.roles[idx] = {
           name: base.name,
+          ...(base.plugin ? { plugin: base.plugin } : {}),
           org: base.org,
           team: base.team,
           agent: userRole.agent ?? base.agent,
@@ -853,6 +861,7 @@ function deepCopyOrg(org: RuntimeOrg): RuntimeOrg {
       name: team.name,
       roles: team.roles.map(role => ({
         name: role.name,
+        ...(role.plugin ? { plugin: role.plugin } : {}),
         org: role.org,
         team: role.team,
         agent: role.agent,
@@ -908,6 +917,7 @@ function findAndOverrideRole(
       const base = team.roles[idx];
       team.roles[idx] = {
         name: userRole.name,
+        ...(base.plugin ? { plugin: base.plugin } : {}),
         org: base.org,
         team: base.team,
         agent: userRole.agent ?? base.agent,
@@ -936,6 +946,7 @@ function findAndOverrideRoleByName(
       const base = team.roles[idx];
       team.roles[idx] = {
         name: base.name,
+        ...(base.plugin ? { plugin: base.plugin } : {}),
         org: base.org,
         team: base.team,
         agent: userRole.agent ?? base.agent,
@@ -969,8 +980,15 @@ function buildExtendedRole(
     );
   }
 
+  // User extends references use the `pluginName:RoleName` syntax; the left
+  // side is the source plugin, propagated onto the resulting role so the
+  // emitted orgs.yaml retains attribution.
+  const colonIdx = userRole.extends!.indexOf(':');
+  const pluginName = colonIdx === -1 ? undefined : userRole.extends!.substring(0, colonIdx);
+
   return {
     name: userRole.name,
+    ...(pluginName ? { plugin: pluginName } : {}),
     // `org` and `team` are populated by finaliseRuntimeOrgs() once the full
     // composition has been stitched together.
     org: '',

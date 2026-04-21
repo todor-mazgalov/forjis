@@ -61,13 +61,10 @@ async function fetchPlanForId(id: string | null): Promise<PipelinePlanResponse |
 /**
  * Flatten a `ResourcesResponse` into a map keyed by bare role name.
  *
- * Resources still ship `role.name` as the resolver's internal scoped name
- * (e.g. `software-dev:Architect`) — the scoped prefix is preserved so the
- * resolver's plugin-extension mechanism can match roles from different
- * plugins with the same tail. `PipelineStep.role` now holds only the bare
- * tail (per `fix-roles-display`), so the index drops the scoped prefix and
- * keys on the tail. On name collision the first occurrence wins —
- * documented trade-off in design D-4 of redesign-006.
+ * The resolver now emits bare role names (e.g. `Architect`) with plugin
+ * origin carried in a separate `plugin` field, so the index keys directly
+ * on `role.name`. On name collision the first occurrence wins — documented
+ * trade-off in design D-4 of redesign-006.
  */
 function indexResourcesByRole(resources: ResourcesResponse | null): Record<string, RoleResource> {
   const map: Record<string, RoleResource> = {};
@@ -75,10 +72,8 @@ function indexResourcesByRole(resources: ResourcesResponse | null): Record<strin
   for (const org of resources.orgs) {
     for (const team of org.teams) {
       for (const role of team.roles) {
-        const idx = role.name.lastIndexOf(':');
-        const tail = idx < 0 ? role.name : role.name.slice(idx + 1);
-        if (map[tail] === undefined) {
-          map[tail] = role;
+        if (map[role.name] === undefined) {
+          map[role.name] = role;
         }
       }
     }

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "~/.forjis/cache/"
+    ],
+    "allow": [
+      "Bash", "Write", "Edit", "Read", "Glob", "Grep", "WebFetch"
+    ]
+  }
+}

@@ -21,6 +21,11 @@ export interface RoleIdentity {
   team: string;
   /** Role name (non-empty, no reserved chars). */
   role: string;
+  /** Source plugin name when the role originates from a plugin (non-empty,
+   *  no reserved chars). Optional — project-local roles omit this field.
+   *  Not part of the identity used for lookup (`(org, team, role)` remains
+   *  the unique key); carried as metadata for display and diagnostics. */
+  plugin?: string;
 }
 
 /** Machine-readable reason a RoleIdentityError was raised. */
@@ -125,8 +130,8 @@ export function parseRoleDisplay(str: string): { role: string; team: string } | 
  * @throws {RoleIdentityError} With `code: 'EMPTY'` or `'RESERVED_CHAR'`.
  */
 export function validateRoleIdentityShape(identity: RoleIdentity): void {
-  const fields: Array<keyof RoleIdentity> = ['org', 'team', 'role'];
-  for (const field of fields) {
+  const required: Array<keyof RoleIdentity> = ['org', 'team', 'role'];
+  for (const field of required) {
     const value = identity[field];
     if (typeof value !== 'string' || value.length === 0) {
       throw new RoleIdentityError(
@@ -137,6 +142,22 @@ export function validateRoleIdentityShape(identity: RoleIdentity): void {
     if (RESERVED_CHAR_PATTERN.test(value)) {
       throw new RoleIdentityError(
         `Role identity field "${field}"="${value}" contains a reserved character (":", "@", newline, or tab)`,
+        'RESERVED_CHAR',
+      );
+    }
+  }
+  // `plugin` is optional metadata; validate the same reserved-char rule when
+  // present so a bad value never reaches orgs.yaml or pipeline-plan.yaml.
+  if (identity.plugin !== undefined) {
+    if (typeof identity.plugin !== 'string' || identity.plugin.length === 0) {
+      throw new RoleIdentityError(
+        `Role identity field "plugin" must be a non-empty string when present`,
+        'EMPTY',
+      );
+    }
+    if (RESERVED_CHAR_PATTERN.test(identity.plugin)) {
+      throw new RoleIdentityError(
+        `Role identity field "plugin"="${identity.plugin}" contains a reserved character (":", "@", newline, or tab)`,
         'RESERVED_CHAR',
       );
     }

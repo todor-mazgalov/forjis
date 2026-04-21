@@ -133,7 +133,7 @@ describe('FR-012: describeRole handles assessor', () => {
   });
 
   it('returns description for role containing "assessor" in any position', () => {
-    const desc = describeRole('software-dev:Assessor');
+    const desc = describeRole('custom-assessor-role');
     expect(desc).toBe('Outcome assessment and scoring');
   });
 });

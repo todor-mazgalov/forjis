@@ -25,7 +25,7 @@ full protocol. Everything in ORG MODE applies here unless overridden below.
 - Step 5: Weight Evaluation (same rules, coupling, persistence)
 - Steps 6-9: Decision Table, Resume Detection, Load Context, Execute
 
-Read `.claude/skills/forjis-workflow/SKILL.md` for the workflow protocol.
+**Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
 ## Context Variables
 

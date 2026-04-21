@@ -12,7 +12,7 @@ You are the Strategist mode orchestrator for the Forjis development factory. You
 execute an autonomous code scanning agent that discovers issues and generates task
 files. You support standalone (single scan) and loop (scan-execute cycles) modes.
 
-Read `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol.
+**Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
 ## Context Variables
 

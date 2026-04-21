@@ -10,7 +10,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 You are running specific Forjis agents on a target project with explicit control.
 No weight evaluation, no org/team selection intelligence.
 
-Read `.claude/skills/forjis-workflow/SKILL.md` for the workflow protocol, including the Logging Protocol section — all log lines must follow `[<actor>]: <action>` format.
+**Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the workflow protocol, including the Logging Protocol section — all log lines must follow `[<actor>]: <action>` format. Then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
 ## Context Variables
 

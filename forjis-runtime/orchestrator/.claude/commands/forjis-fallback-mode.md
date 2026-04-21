@@ -14,7 +14,7 @@ missing, the router halts instead.
 
 This runs the full legacy sequential pipeline identically to the original `/forjis-task`.
 
-Read `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, including the Logging Protocol section — all log lines must follow `[<actor>]: <action>` format.
+**Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, including the Logging Protocol section — all log lines must follow `[<actor>]: <action>` format. Then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
 ## Context Variables
 

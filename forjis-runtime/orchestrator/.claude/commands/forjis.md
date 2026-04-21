@@ -12,7 +12,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 You are the entry point for all Forjis pipeline operations. Your job is minimal:
 parse arguments, detect the execution mode, and delegate to the appropriate mode file.
 
-Read `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol.
+**Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
 ## Logging Protocol
 

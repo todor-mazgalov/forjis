@@ -130,6 +130,11 @@ export interface PipelineStep {
    *  `role @ team`. Use `formatRoleDisplay` from `@forjis/shared` for any
    *  user-visible rendering. */
   role: string;
+  /** Source plugin name when the role originates from a plugin (e.g.
+   *  "software-dev"). Absent for project-local roles. Carried for diagnostic
+   *  clarity — not part of the identity used to match against the runtime
+   *  config. */
+  plugin?: string;
   /** Agent name assigned to this role. */
   agent: string;
   /** Current status of this step. */

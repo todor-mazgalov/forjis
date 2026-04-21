@@ -125,7 +125,7 @@ describe('composeRuntime — reserved-character rejection', () => {
     expect(() => composeRuntime(config, [], mockRegistryAlwaysResolves())).toThrow(ResolverError);
   });
 
-  it('accepts a role whose internal plugin: prefix is an implementation detail', () => {
+  it('emits plugin-origin roles with bare name + separate plugin field', () => {
     const plugin = parsePlugin([
       'name: software-dev',
       'version: 1.0.0',
@@ -142,8 +142,12 @@ describe('composeRuntime — reserved-character rejection', () => {
       orgs: [{ name: 'my-team', extends: 'software-dev:product-team', roles: [] }],
     });
 
-    // Scoped name `software-dev:BackendDev` contains `:` but the validation
-    // is scoped to the bare user-authored `BackendDev`, so this must pass.
-    expect(() => composeRuntime(config, [plugin], mockRegistryAlwaysResolves())).not.toThrow();
+    // `BackendDev` is bare (no reserved chars) and `plugin` is a separate
+    // field, so identity validation must pass.
+    const runtime = composeRuntime(config, [plugin], mockRegistryAlwaysResolves());
+    const allRoles = runtime.orgs.flatMap(o => o.teams.flatMap(t => t.roles));
+    const backendDev = allRoles.find(r => r.name === 'BackendDev');
+    expect(backendDev).toBeDefined();
+    expect(backendDev!.plugin).toBe('software-dev');
   });
 });

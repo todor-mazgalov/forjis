@@ -78,6 +78,21 @@ interface PipelineStateRole {
   /** Orchestrator decision. Absent on historical data; defaulted to "pending" by the plan-writer. */
   decision?: 'started' | 'skipped' | 'pending';
   justification?: string;
+  /**
+   * Per-role team override for cross-team roles (Step 3c in org-mode). When
+   * set, takes precedence over the top-level `team` when writing the plan
+   * step so the facilitator's strict plan parser can locate the role in the
+   * resolved config. Absent for roles that belong to the pipeline's primary
+   * team.
+   */
+  team?: string;
+  /** Per-role org override, symmetric with `team`. Rarely used. */
+  org?: string;
+  /** Source plugin name (e.g. "software-dev") when the role comes from a
+   *  plugin. Absent for project-local roles. Carried through from orgs.yaml
+   *  for diagnostic clarity on the dashboard; not part of the identity used
+   *  for plan lookup. */
+  plugin?: string;
 }
 
 /**
@@ -264,10 +279,12 @@ export async function syncPlanFromState(
     const step: PipelineStep = {
       // Three separate identity fields — never a composite string. The plan
       // parser in this module and the strict orchestrator contract both
-      // depend on this layout.
-      org: state.org ?? '',
-      team: state.team ?? '',
+      // depend on this layout. Per-role `org`/`team` overrides (for cross-
+      // team pulls) take precedence over the pipeline's primary org/team.
+      org: role.org ?? state.org ?? '',
+      team: role.team ?? state.team ?? '',
       role: role.name,
+      ...(role.plugin ? { plugin: role.plugin } : {}),
       agent: role.agent,
       status: normalizedStatus,
       description: role.description ?? describeRole(role.name),
@@ -409,7 +426,11 @@ export async function getRunningRole(
     return null;
   }
 
-  return { org: state.org, team: state.team, role: running.name };
+  return {
+    org: running.org ?? state.org,
+    team: running.team ?? state.team,
+    role: running.name,
+  };
 }
 
 /**

@@ -158,7 +158,7 @@ describe('verifyPluginDependencies', () => {
 // --------------------------------------------------------------------------
 
 describe('composeRuntime — role scoping', () => {
-  it('scopes role names with plugin name prefix', () => {
+  it('emits plugin roles with bare name and a separate plugin field', () => {
     const plugin = parsePlugin(pluginWithRoleYaml('software-dev', 'BackendDev'));
     const config = minimalBuildConfig({
       orgs: [{ name: 'my-team', extends: 'software-dev:product-team', roles: [] }],
@@ -168,7 +168,9 @@ describe('composeRuntime — role scoping', () => {
     const runtime = composeRuntime(config, [plugin], registry);
 
     const allRoles = runtime.orgs.flatMap(o => o.teams.flatMap(t => t.roles));
-    expect(allRoles.find(r => r.name === 'software-dev:BackendDev')).toBeDefined();
+    const backendDev = allRoles.find(r => r.name === 'BackendDev');
+    expect(backendDev).toBeDefined();
+    expect(backendDev!.plugin).toBe('software-dev');
   });
 });
 
@@ -195,7 +197,9 @@ describe('composeRuntime — user org extends plugin org', () => {
     const runtime = composeRuntime(config, [plugin], registry);
 
     const allRoles = runtime.orgs[0].teams.flatMap(t => t.roles);
-    expect(allRoles.some(r => r.name === 'software-dev:BackendDev')).toBe(true);
+    expect(
+      allRoles.some(r => r.name === 'BackendDev' && r.plugin === 'software-dev'),
+    ).toBe(true);
     expect(allRoles.some(r => r.name === 'DataEngineer')).toBe(true);
   });
 });
@@ -494,7 +498,7 @@ describe('composeRuntime — role outcomes forwarding', () => {
     const runtime = composeRuntime(config, [plugin], registry);
 
     const allRoles = runtime.orgs.flatMap(o => o.teams.flatMap(t => t.roles));
-    const role = allRoles.find(r => r.name === 'software-dev:BackendDev');
+    const role = allRoles.find(r => r.name === 'BackendDev' && r.plugin === 'software-dev');
     expect(role).toBeDefined();
     expect(role!.outcomes).toEqual(['dev']);
   });

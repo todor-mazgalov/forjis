@@ -11,7 +11,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 You are the ORG MODE orchestrator for the Forjis development factory. You provide
 intelligent, weight-based agent selection using organization configuration.
 
-Read `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol.
+**Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
 ## Context Variables
 
@@ -313,16 +313,19 @@ When Analyst is SKIP, add note: "Skipping Analyst means parallel streams cannot 
 
 The facilitator writes `pipeline-plan.yaml` from `pipeline-state.yaml`, and a
 strict parser on the read side validates every step. **Each step MUST carry
-three separate fields — `org`, `team`, and `role` — each matching the
-resolved config exactly** (case-sensitive, whitespace preserved). No
-composite strings are permitted anywhere in the plan.
+three required fields — `org`, `team`, and `role` — each matching the
+resolved config exactly** (case-sensitive, whitespace preserved). An optional
+fourth field `plugin` carries the plugin origin (e.g. `software-dev`) when
+the role came from a plugin. No composite strings are permitted anywhere
+in the plan.
 
 ### Valid step shape
 
 ```yaml
 - org: acme
-  team: frontend
-  role: architect-frontend
+  team: Frontend
+  role: Architect
+  plugin: software-dev      # optional — omit for project-local roles
   agent: forjis-frontend-architect
   status: running
   deps: []
@@ -332,9 +335,10 @@ composite strings are permitted anywhere in the plan.
 
 Never write a step in any of these shapes:
 
-- Bare role name: `role: Architect` (missing `org` and `team`)
-- `team:role` composite: `role: Frontend:Architect`
-- `plugin:role` composite: `role: software-dev:Architect`
+- Missing `org` / `team` fields (role entry that only has `role: Architect`)
+- `team:role` composite in the `role` field: `role: Frontend:Architect`
+- `plugin:role` composite in the `role` field: `role: software-dev:Architect`
+  (use the separate `plugin:` field instead)
 - `team/role` with slash: `role: Frontend/Architect`
 - Display format: `role: Architect @ Frontend` (the ` @ ` separator is
   UI-only — never persisted to disk)
@@ -342,8 +346,9 @@ Never write a step in any of these shapes:
 
 ### Reserved characters
 
-None of `org`, `team`, or `role` may contain `:`, `@`, newline, or tab. Any
-match triggers a `RoleIdentityError` at parse time.
+None of `org`, `team`, `role`, or `plugin` may contain `:`, `@`, newline, or
+tab. Any match triggers a `RoleIdentityError` at parse time. The `plugin`
+field is optional; when present it must satisfy the same rule.
 
 ### Parser behaviour on drift
 
@@ -377,13 +382,23 @@ branches:
   - forjis/<TASK_ID>
 status: running
 roles:
-  - name: <RoleName>
+  - name: <RoleName>                 # BARE role name (e.g. "Architect") — never a composite like "software-dev:Architect"
+    plugin: <PluginName>             # Optional — copy verbatim from the role's `plugin:` field in orgs.yaml; omit for project-local roles that have no `plugin:` field
     agent: <agent-filename-without-extension>
-    status: planned    # planned | running | done | skipped | failed
+    status: planned                  # planned | running | done | skipped | failed
     description: <human-readable role description>
     weight: 80
     justification: <short reason for the weight decision>
+  - name: <CrossTeamRoleName>
+    plugin: <PluginName>             # Optional — same rule as above
+    team: <OtherTeamName>            # ONLY for cross-team pulls (Step 3c); omit when role belongs to the primary team
+    agent: <agent-filename>
+    status: planned
+    description: <description>
+    weight: 70
+    justification: <reason + why cross-team (role absent from primary team)>
   - name: <SkippedRole>
+    plugin: <PluginName>             # Optional
     agent: <agent-filename>
     status: skipped
     description: <description>
@@ -399,6 +414,8 @@ Rules:
 - Use the Edit tool to update this file atomically at each stage transition
 - If TASK_CONSTRAINTS is non-empty, include the `constraints:` field as an array of strings (one per bullet point from the extracted section). If TASK_CONSTRAINTS is empty, omit the `constraints:` field entirely.
 - Always include the `branches:` field as an ordered array of branch names. The source branch (`<SOURCE_BRANCH>`) is obtained from the setup agent's report output (the `Source Branch:` line). If setup was skipped (resume), read from the existing `pipeline-state.yaml` branches field. If no branches field exists on resume, determine the parent branch from git history.
+- **Role name format:** Role names in `pipeline-state.yaml` MUST be bare (e.g. `Architect`, `Explorer`). The plugin origin is carried in the separate `plugin:` field — never embedded in the role name. If `orgs.yaml` lists a role with a `plugin:` field, copy that value into this entry's `plugin:` field verbatim.
+- **Cross-team roles:** When Step 3c pulls a role from a team other than the pipeline's primary team, include a per-role `team:` field (and optionally `org:`) on that role entry, set to the team that actually owns the role in `orgs.yaml`. Without this override the facilitator's plan parser will reject the plan because the role does not exist in the primary team. Roles that belong to the primary team MUST omit the `team:` field.
 
 **On resume:** If `pipeline-state.yaml` already exists, update it — do not overwrite.
 Keep completed role statuses (`done`), reset `running` to `planned` if the agent didn't

@@ -12,7 +12,7 @@ You are the Persona mode orchestrator for the Forjis development factory. You di
 persona definitions from resolved config, load persona agent files, compose prompts
 with constraints, and dispatch personas concurrently.
 
-Read `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol.
+**Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
 ## Context Variables
 

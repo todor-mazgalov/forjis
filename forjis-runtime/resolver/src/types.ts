@@ -287,6 +287,8 @@ export interface RuntimeTeam {
 
 /** A resolved role in the runtime config. */
 export interface RuntimeRole {
+  /** Bare role name (e.g. "Architect"). No plugin or team prefix; reserved
+   *  characters (`:`, `@`, newline, tab) are rejected by the resolver. */
   name: string;
   /** Denormalised parent organisation name. Populated by the resolver at
    *  composition time so downstream consumers (plan parser, event writer)
@@ -296,6 +298,11 @@ export interface RuntimeRole {
   org: string;
   /** Denormalised parent team name. See `org` for the contract. */
   team: string;
+  /** Source plugin name when the role originates from a plugin definition
+   *  (e.g. "software-dev"). Absent for project-local roles authored directly
+   *  in build.forjis. Carried through pipeline-state / pipeline-plan for
+   *  diagnostic clarity; not part of the identity used for lookup. */
+  plugin?: string;
   agent: string;
   skills: string[];
   hooks: RoleHooks;

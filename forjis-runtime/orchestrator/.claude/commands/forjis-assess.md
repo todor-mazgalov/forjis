@@ -13,7 +13,7 @@ outcome assessment on a completed or failed task, reading outcome group definiti
 from resolved config, resolving applicable groups per role, evaluating metrics, and
 applying rules.
 
-Read `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol.
+**Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
 ## Context Variables
 
