@@ -118,6 +118,11 @@ export type { InspectorServiceOptions } from './web-services/inspector-service.j
 export { wireInspectorMessagePump } from './web-services/inspector-message-pump.js';
 export { getDefaultClarifierPath, loadClarifierAgent } from './inspector-agent-loader.js';
 export type { ClarifierAgent, ClarifierAgentConfig } from './inspector-agent-loader.js';
+export { InspectorClarifierRunner } from './inspector-clarifier-runner.js';
+export type {
+  InspectorClarifierRunnerOptions,
+  ClarifierPersonaLoader,
+} from './inspector-clarifier-runner.js';
 export { RuntimeServiceImpl } from './web-services/runtime-service.js';
 export type { WorkerStateRef } from './web-services/runtime-service.js';
 export { writePipelinePlan, syncPlanFromState, syncBranchesFromState, forcePlanReady, getRunningRole, parsePipelinePlan, PlanRoleNotFoundError } from './web-services/plan-writer.js';

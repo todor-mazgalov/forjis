@@ -26,6 +26,7 @@ import type {
 } from '../../engine.js';
 import {
   CliError,
+  EngineCapabilityError,
   EngineInvocationError,
   EngineTimeoutError,
 } from '../../errors.js';
@@ -57,6 +58,18 @@ export class ClaudeEngine implements ForjisEngine {
    * this to a small value to exercise the watchdog path quickly.
    */
   silenceTimeoutMs: number = DEFAULT_SILENCE_TIMEOUT_MS;
+
+  /**
+   * Live subprocess handles keyed by `taskId`. Populated inside
+   * {@link prompt} when `options.id` is set and cleaned up on the
+   * subprocess's `close` or `error` callback. Enables
+   * {@link onUserMessage} to address the correct running child when
+   * multiple clarifier subprocesses are spawned concurrently.
+   */
+  private readonly activeChildren = new Map<
+    string,
+    ChildProcessByStdio<Writable, Readable, Readable>
+  >();
 
   /**
    * Protected seam used by `prompt()` to spawn the underlying child process.
@@ -226,8 +239,16 @@ export class ClaudeEngine implements ForjisEngine {
         }
       }
 
+      // Register the child handle so onUserMessage can find it while the
+      // subprocess is alive. Keyed by the caller-supplied task id.
+      if (options.id) {
+        this.activeChildren.set(options.id, child);
+      }
+
       child.stdin.write(text);
-      child.stdin.end();
+      if (!options.keepStdinOpen) {
+        child.stdin.end();
+      }
 
       let resultText = '';
       let stderr = '';
@@ -308,9 +329,18 @@ export class ClaudeEngine implements ForjisEngine {
         }
       });
 
+      const deregisterChild = (): void => {
+        if (!options.id) return;
+        const tracked = this.activeChildren.get(options.id);
+        if (tracked === child) {
+          this.activeChildren.delete(options.id);
+        }
+      };
+
       child.on('error', (err) => {
         clearWatchdog();
         cleanupPidFile();
+        deregisterChild();
         if (settled) return;
         settled = true;
         console.error('\n[Error] Failed to start process:', err.message);
@@ -320,6 +350,7 @@ export class ClaudeEngine implements ForjisEngine {
       child.on('close', (code) => {
         clearWatchdog();
         cleanupPidFile();
+        deregisterChild();
         if (settled) return;
         settled = true;
         console.log(`[engine]: claude subprocess exited (code: ${code})`);
@@ -408,7 +439,53 @@ export class ClaudeEngine implements ForjisEngine {
     options.projectDir = projectDir;
     options.onEvent = onEvent;
     options.ctx = ctx;
+    // The clarifier runs interactively: the facilitator injects additional
+    // user turns (clarify answers, guardrail hints) via `onUserMessage`
+    // while the subprocess is still alive. Leaving stdin open is a
+    // prerequisite for that injection.
+    if (mode === 'inspector-clarify') {
+      options.keepStdinOpen = true;
+    }
     return this.prompt(command, options);
+  }
+
+  /**
+   * Append a new user turn to the running subprocess for `taskId`.
+   *
+   * Looks up the live child handle in {@link activeChildren}; when absent
+   * rejects with an {@link EngineCapabilityError} naming the missing
+   * subprocess. Otherwise writes `text` plus a trailing newline to the
+   * child's stdin so the Claude CLI's line-delimited parser treats it as
+   * a fresh user turn.
+   *
+   * The subprocess's stdin must have been opened with `keepStdinOpen:
+   * true` at spawn time for this call to succeed; the inspector-clarify
+   * mode sets that flag automatically via
+   * {@link spawnClaude}.
+   *
+   * @param taskId - Identifier matching the live subprocess's invocation id.
+   * @param text - Payload appended as a new user turn. A trailing newline
+   *   is added automatically.
+   * @throws {EngineCapabilityError} When no subprocess is running for
+   *   `taskId`, or when the subprocess's stdin has already been closed.
+   */
+  async onUserMessage(taskId: string, text: string): Promise<void> {
+    const child = this.activeChildren.get(taskId);
+    if (!child) {
+      throw new EngineCapabilityError(
+        this.name,
+        'onUserMessage',
+        `no active subprocess for task "${taskId}"`,
+      );
+    }
+    if (child.stdin.destroyed || child.stdin.writableEnded) {
+      throw new EngineCapabilityError(
+        this.name,
+        'onUserMessage',
+        `stdin closed for task "${taskId}"`,
+      );
+    }
+    child.stdin.write(`${text}\n`);
   }
 
   /**

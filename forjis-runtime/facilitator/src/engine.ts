@@ -99,6 +99,31 @@ export interface ForjisEngine {
    * @returns The engine's text response.
    */
   prompt(text: string, options: PromptOptions): Promise<string>;
+
+  /**
+   * Append `text` to the running subprocess for `taskId` as a fresh
+   * user turn.
+   *
+   * Engines that support mid-run interactive input (for example the Claude
+   * Code CLI when spawned with `keepStdinOpen`) implement this method by
+   * writing the payload — plus a trailing newline — to the live
+   * subprocess's stdin. The subprocess's line-based parser treats the
+   * write as a new user turn.
+   *
+   * Engines that do not support mid-run injection MAY omit the method;
+   * callers MUST check presence before invocation. The implementation
+   * MUST return a rejected promise when no subprocess is running for the
+   * supplied task id.
+   *
+   * @param taskId - Identifier used at invoke time. Matches the id passed
+   *   to {@link invoke} via {@link EngineInvokeOptions.taskId}.
+   * @param text - Payload written to the subprocess stdin. A trailing
+   *   newline is appended by the engine to ensure the subprocess's
+   *   line-based parser accepts the turn.
+   * @returns A promise that resolves once the write is buffered on the
+   *   subprocess stdin, or rejects when no matching subprocess exists.
+   */
+  onUserMessage?(taskId: string, text: string): Promise<void>;
 }
 
 // -- Engine Registry --------------------------------------------------------

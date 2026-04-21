@@ -13,10 +13,29 @@
  * handles wire protocol concerns.
  */
 
-import type { InspectorMessage, InspectorService, InspectorTransport } from '@forjis/shared';
+import type { ClarifyAnswer, InspectorMessage, InspectorService, InspectorTransport } from '@forjis/shared';
 import { assertNeverInspectorMessage } from '@forjis/shared';
 
 import { ConcurrentBatchError } from './inspector-service.js';
+
+/**
+ * Subset of `InspectorServiceImpl` the pump needs for routing that the
+ * shared {@link InspectorService} interface does not expose.
+ *
+ * The pump receives the public `InspectorService` type but routes both
+ * `clarify.answer` and `batch.abort` through these facilitator-internal
+ * methods when they are present. Structural typing keeps the public
+ * wire-protocol interface clean while letting the pump forward the
+ * originating client id to the runner.
+ */
+interface ClientAwareInspectorService extends InspectorService {
+  answerClarifyWithClient?(
+    batchId: string,
+    answer: ClarifyAnswer,
+    clientId: string | null,
+  ): Promise<void>;
+  abortBatch?(batchId: string, clientId: string | null): Promise<void>;
+}
 
 /**
  * Wire an {@link InspectorService} to an {@link InspectorTransport}.
@@ -24,12 +43,13 @@ import { ConcurrentBatchError } from './inspector-service.js';
  * Registers exactly one `onMessage` handler on the transport. Inbound client-
  * to-server frames are dispatched per {@link InspectorMessage} type:
  *
- * | Inbound `type`   | Service call                                   | Outbound on success                                                    |
- * | ---------------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
- * | `pin.create`     | `addPin(batchId, pin)`                         | `{ type: "pin.ack", pinId }`                                           |
- * | `batch.submit`   | `submitBatch(batchId)`                         | `{ type: "task.status", batchId, status: "clarifying" }`               |
- * | `clarify.answer` | `answerClarify(batchId, answer)`               | none                                                                   |
- * | `reply.create`   | `replyToPin(parentPinId, pin, comment)`        | `{ type: "pin.ack", pinId }`                                           |
+ * | Inbound `type`   | Service call                                              | Outbound on success                                                    |
+ * | ---------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+ * | `pin.create`     | `addPin(batchId, pin)`                                    | `{ type: "pin.ack", pinId }`                                           |
+ * | `batch.submit`   | `submitBatch(batchId)`                                    | `{ type: "task.status", batchId, status: "clarifying" }`               |
+ * | `clarify.answer` | `answerClarifyWithClient(batchId, answer, clientId)`      | none                                                                   |
+ * | `reply.create`   | `replyToPin(parentPinId, pin, comment)`                   | `{ type: "pin.ack", pinId }`                                           |
+ * | `batch.abort`    | `abortBatch(batchId, clientId)`                           | none (runner emits `batch.finalize` when the clarifier exits)          |
  *
  * Server-to-client frame types (`session.ack`, `session.error`, `pin.ack`,
  * `clarify.question`, `batch.finalize`, `task.status`) arriving inbound are
@@ -73,6 +93,7 @@ async function dispatchInboundMessage(
   clientId: string,
   msg: InspectorMessage,
 ): Promise<void> {
+  const aware = service as ClientAwareInspectorService;
   switch (msg.type) {
     case 'pin.create':
       await service.addPin(msg.batchId, msg.pin);
@@ -87,11 +108,24 @@ async function dispatchInboundMessage(
       });
       return;
     case 'clarify.answer':
-      await service.answerClarify(msg.batchId, msg.answer);
+      if (typeof aware.answerClarifyWithClient === 'function') {
+        await aware.answerClarifyWithClient(msg.batchId, msg.answer, clientId);
+      } else {
+        await service.answerClarify(msg.batchId, msg.answer);
+      }
       return;
     case 'reply.create':
       await service.replyToPin(msg.parentPinId, msg.pin, msg.comment);
       transport.send(clientId, { type: 'pin.ack', pinId: msg.pin.id });
+      return;
+    case 'batch.abort':
+      if (typeof aware.abortBatch === 'function') {
+        await aware.abortBatch(msg.batchId, clientId);
+      }
+      // When the service does not implement abortBatch (for example a
+      // stub used in a test that does not exercise abort), drop the
+      // frame silently — the public interface does not carry an abort
+      // method, so the caller is responsible for wiring one if needed.
       return;
     case 'session.join':
     case 'session.ack':

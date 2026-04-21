@@ -183,4 +183,14 @@ export class PromptOptions {
    * When undefined, the engine applies its default (30 min).
    */
   silenceTimeoutMs?: number;
+  /**
+   * When true, the engine adapter must NOT close the subprocess's stdin
+   * after the initial prompt is written. Leaves the channel open so the
+   * engine's {@link import('./engine.js').ForjisEngine.onUserMessage}
+   * method can append subsequent user turns as newline-delimited
+   * payloads. Used by the inspector-clarify mode. When false or
+   * undefined, the engine closes stdin immediately after the initial
+   * prompt write (legacy one-shot behaviour).
+   */
+  keepStdinOpen?: boolean;
 }

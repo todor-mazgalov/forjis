@@ -329,7 +329,7 @@ describe('InspectorServiceImpl', () => {
 
   it('answerClarify emits clarify.answer and does not mutate state', async () => {
     const batch = await service.createBatch('web');
-    const observed: Array<{ batchId: string; answer: unknown }> = [];
+    const observed: Array<{ batchId: string; answer: unknown; clientId: string | null }> = [];
     service.on('clarify.answer', payload => observed.push(payload));
 
     await service.answerClarify(batch.id, {
@@ -339,7 +339,11 @@ describe('InspectorServiceImpl', () => {
     });
 
     expect(observed).toEqual([
-      { batchId: batch.id, answer: { questionId: 'q1', optionId: 'a', freeText: null } },
+      {
+        batchId: batch.id,
+        answer: { questionId: 'q1', optionId: 'a', freeText: null },
+        clientId: null,
+      },
     ]);
 
     const fetched = await service.getBatch(batch.id);
