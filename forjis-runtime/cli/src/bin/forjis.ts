@@ -8,6 +8,7 @@
  *
  * Resources & actions:
  *   forjis run                          -- run the pipeline (default)
+ *   forjis dev [flags]                  -- start an inspector dev session
  *   forjis init                         -- scaffold build.forjis
  *   forjis validate                     -- validate build file
  *   forjis status                       -- show queue state
@@ -35,6 +36,9 @@
  *   --port <n>     -- web server port (default: 4242)
  *   --host <addr>  -- web server bind address (default: 127.0.0.1)
  *   --web-token [v] -- enable auth token (auto-generate if no value given)
+ *   --dev-cmd <cmd>  -- shell command for the user's dev server (forjis dev)
+ *   --dev-cwd <path> -- working directory for the dev server (forjis dev)
+ *   --tunnel       -- launch a public tunnel via cloudflared/ngrok (forjis dev)
  *   -i             -- interactive mode (task create / persona create)
  *   --force        -- skip confirmation prompt
  *   --help         -- show usage
@@ -46,6 +50,7 @@ import { resolve } from 'node:path';
 
 import {
   assessCommand,
+  devCommand,
   initCommand,
   personaGenerateCommand,
   personaRunCommand,
@@ -76,8 +81,18 @@ interface ParsedArgs {
   interactive: boolean;
   web: boolean;
   port: number;
+  /** True when `--port` was supplied explicitly; distinguishes "unset" from the default. */
+  portExplicit: boolean;
   host: string;
+  /** True when `--host` was supplied explicitly; distinguishes "unset" from the default. */
+  hostExplicit: boolean;
   webToken: string | null;
+  /** Shell command for the `forjis dev` subprocess; null when not supplied. */
+  devCmd: string | null;
+  /** Working directory for the `forjis dev` subprocess; null when not supplied. */
+  devCwd: string | null;
+  /** Whether `forjis dev --tunnel` should spawn a tunnel tool. */
+  tunnel: boolean;
   force: boolean;
   help: boolean;
   loopCount: number | null;
@@ -126,8 +141,13 @@ function parseArgs(argv: string[]): ParsedArgs {
     interactive: false,
     web: false,
     port: 4242,
+    portExplicit: false,
     host: '127.0.0.1',
+    hostExplicit: false,
     webToken: null,
+    devCmd: null,
+    devCwd: null,
+    tunnel: false,
     force: false,
     help: false,
     loopCount: null,
@@ -198,13 +218,33 @@ function parseArgs(argv: string[]): ParsedArgs {
         throw new Error('--port requires an integer between 1 and 65535');
       }
       result.port = port;
+      result.portExplicit = true;
       i += 2;
       continue;
     }
 
     if (arg === '--host' && i + 1 < argv.length) {
       result.host = argv[i + 1];
+      result.hostExplicit = true;
       i += 2;
+      continue;
+    }
+
+    if (arg === '--dev-cmd' && i + 1 < argv.length) {
+      result.devCmd = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === '--dev-cwd' && i + 1 < argv.length) {
+      result.devCwd = argv[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (arg === '--tunnel') {
+      result.tunnel = true;
+      i++;
       continue;
     }
 
@@ -309,6 +349,16 @@ async function routeCommand(args: ParsedArgs): Promise<void> {
         host: args.host,
         webToken: args.webToken,
         projectDir: cwd,
+      });
+      break;
+
+    case 'dev':
+      await devCommand(cwd, args.buildFilePath, {
+        port: args.portExplicit ? args.port : undefined,
+        host: args.hostExplicit ? args.host : undefined,
+        devServerCmd: args.devCmd ?? undefined,
+        devServerCwd: args.devCwd ?? undefined,
+        tunnel: args.tunnel,
       });
       break;
 
@@ -472,6 +522,9 @@ function printHelp(command: string | null): void {
     case 'strategist':
       printStrategistHelp();
       break;
+    case 'dev':
+      printDevHelp();
+      break;
     default:
       printUsage();
       break;
@@ -526,6 +579,28 @@ Flags:
 `);
 }
 
+/** Prints help for the dev subcommand. */
+function printDevHelp(): void {
+  console.log(`
+Usage: forjis dev [flags]
+
+Starts an inspector dev session: HTTP dashboard + WebSocket endpoint +
+user dev-server subprocess. Prints a scannable session URL and QR code
+at startup; tears everything down cleanly on Ctrl-C (SIGINT) or SIGTERM.
+
+Flags:
+  --port <number>             HTTP / WebSocket listen port (default: 4242)
+  --host <address>            Bind + printed host (default: LAN IPv4 or 127.0.0.1)
+  --dev-cmd <command>         Shell command for the user's dev server
+                              (default: "npm run dev" or build.forjis dev.command)
+  --dev-cwd <path>            Working directory for the dev server
+                              (default: project root or build.forjis dev.cwd)
+  --tunnel                    Launch a public tunnel via cloudflared/ngrok
+                              (detects whichever is on PATH first)
+  --help                      Show this help message
+`);
+}
+
 /** Prints help for the strategist subcommand. */
 function printStrategistHelp(): void {
   console.log(`
@@ -547,6 +622,7 @@ Usage: forjis <resource> <action> [flags] [params]
 
 Framework commands (no resource):
   run                              Run the pipeline (default)
+  dev                              Start an inspector dev session (HTTP + WS + dev server)
   init                             Scaffold a new build.forjis
   validate                         Parse and validate the build file
   status                           Show queue state
@@ -576,6 +652,9 @@ Flags:
   --port <number>        Web server port (default: 4242)
   --host <address>       Web server bind address (default: 127.0.0.1)
   --web-token [value]    Enable auth token (auto-generate if no value)
+  --dev-cmd <command>    Shell command for the dev server (forjis dev)
+  --dev-cwd <path>       Working directory for the dev server (forjis dev)
+  --tunnel               Launch a public tunnel via cloudflared/ngrok (forjis dev)
   -i                     Interactive mode (task create / persona create)
   --force                Skip confirmation prompt
   --help                 Show this help message

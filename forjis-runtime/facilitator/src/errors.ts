@@ -135,6 +135,29 @@ export class EngineTimeoutError extends CliError {
 }
 
 /**
+ * Thrown by the `forjis dev --tunnel` flow when neither `cloudflared` nor
+ * `ngrok` is available on the system `PATH`.
+ *
+ * The error message names both binaries and their canonical install URLs
+ * so the user can pick one without consulting additional docs. The class
+ * never auto-installs anything — discovery is strictly read-only.
+ */
+export class TunnelToolMissingError extends CliError {
+  /**
+   * Construct the error with a pre-baked, token-free message naming the
+   * required binaries and their install URLs.
+   */
+  constructor() {
+    super(
+      'forjis dev --tunnel requires either "cloudflared" or "ngrok" on PATH. ' +
+        'Install cloudflared: https://developers.cloudflare.com/cloudflared/ ' +
+        'or ngrok: https://ngrok.com/download — no auto-install is performed.',
+    );
+    this.name = 'TunnelToolMissingError';
+  }
+}
+
+/**
  * Thrown when an operation requires an engine capability the loaded engine
  * does not implement (for example, mid-run user-message injection via
  * `onUserMessage` on an engine that only supports one-shot spawns).

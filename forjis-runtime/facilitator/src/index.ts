@@ -58,6 +58,8 @@ export type {
 // -- Command handlers --
 export { runCommand } from './commands/run.js';
 export type { RunOptions } from './commands/run.js';
+export { devCommand } from './commands/dev.js';
+export type { DevCommandOptions } from './commands/dev.js';
 export { initCommand } from './commands/init.js';
 export { validateCommand } from './commands/validate.js';
 export { statusCommand } from './commands/status.js';
