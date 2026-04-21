@@ -1,0 +1,40 @@
+{
+  "name": "@forjis/inspector",
+  "version": "0.5.1",
+  "description": "Browser-runtime SDK for the Forjis Inspector — mounts a session WebSocket client into a host page so later tasks can surface pin capture, clarify chat, and annotation UI.",
+  "keywords": ["forjis", "inspector", "sdk", "browser"],
+  "homepage": "https://github.com/todor-mazgalov/forjis#readme",
+  "bugs": { "url": "https://github.com/todor-mazgalov/forjis/issues" },
+  "license": "MIT",
+  "author": "Todor Mazgalov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/todor-mazgalov/forjis.git",
+    "directory": "forjis-runtime/inspector"
+  },
+  "engines": { "node": ">=20" },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js --forceExit --testTimeout=60000",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@forjis/shared": "0.5.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "jest": "^30.0.0",
+    "jest-environment-jsdom": "^30.0.0",
+    "mock-socket": "^9.3.1",
+    "ts-jest": "^29.2.0",
+    "typescript": "^5.5.0"
+  }
+}

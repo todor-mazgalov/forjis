@@ -3,6 +3,9 @@
  *
  * Compiles packages in dependency order with no bootstrap pass:
  * 1. shared      (types-only, no internal deps)
+ * 1b. inspector  (browser SDK; depends on shared. Built after shared so its
+ *                 dist/ is available to any downstream workspace or external
+ *                 Vite app that resolves `@forjis/inspector`.)
  * 2. resolver    (depends on shared)
  * 3. web         (depends on shared)
  * 3b. web/client (Vite build — produces the dashboard JS/CSS bundle served
@@ -67,6 +70,10 @@ function buildWebClient() {
 console.log('[build] Step 1: Build shared...');
 cleanWorkspace('shared');
 buildWorkspace('shared');
+
+console.log('[build] Step 1b: Build inspector...');
+cleanWorkspace('inspector');
+buildWorkspace('inspector');
 
 console.log('[build] Step 2: Build resolver...');
 cleanWorkspace('resolver');
