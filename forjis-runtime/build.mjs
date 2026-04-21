@@ -6,6 +6,8 @@
  * 1b. inspector  (browser SDK; depends on shared. Built after shared so its
  *                 dist/ is available to any downstream workspace or external
  *                 Vite app that resolves `@forjis/inspector`.)
+ * 1c. vite-plugin-inspector (Vite plugin that mounts @forjis/inspector into
+ *                 dev HTML and stamps JSX elements; depends on inspector.)
  * 2. resolver    (depends on shared)
  * 3. web         (depends on shared)
  * 3b. web/client (Vite build — produces the dashboard JS/CSS bundle served
@@ -74,6 +76,10 @@ buildWorkspace('shared');
 console.log('[build] Step 1b: Build inspector...');
 cleanWorkspace('inspector');
 buildWorkspace('inspector');
+
+console.log('[build] Step 1c: Build vite-plugin-inspector...');
+cleanWorkspace('vite-plugin-inspector');
+buildWorkspace('vite-plugin-inspector');
 
 console.log('[build] Step 2: Build resolver...');
 cleanWorkspace('resolver');
