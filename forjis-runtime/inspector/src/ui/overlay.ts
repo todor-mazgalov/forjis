@@ -5,13 +5,17 @@
  * supplied `onPick` callback on the two-tap confirm gesture.
  */
 
-import type { PinTarget } from '@forjis/shared';
+import type { Pin, PinTarget } from '@forjis/shared';
+import { captureElement } from '../capture/element.js';
+import { captureComputedStyles } from '../capture/styles.js';
+import { captureViewport } from '../capture/viewport.js';
 import {
   computeBbox,
   computeSelector,
   readComponentName,
   readSourceInfo,
 } from '../pick/source-info.js';
+import { createCommentSheet, type CommentSheetHandle } from './comment-sheet.js';
 import { createHighlightBox, type HighlightBoxHandle } from './highlight-box.js';
 import { getMode, onModeChange, type Unsubscribe } from './mode.js';
 import { createToggleButton, type ToggleButtonHandle } from './toggle-button.js';
@@ -20,8 +24,19 @@ import { createToggleButton, type ToggleButtonHandle } from './toggle-button.js'
 export interface InitOverlayOptions {
   /** Host element — `#forjis-inspector-root` created by `mount()`. */
   readonly root: HTMLElement;
-  /** Called once with a {@link PinTarget} per confirmed two-tap pick. */
+  /**
+   * Called once with a {@link PinTarget} per confirmed two-tap pick.
+   *
+   * Preserved from the task-008 contract for backwards compatibility; task-009
+   * additionally threads the target through the capture pipeline and into
+   * {@link InitOverlayOptions.onSubmitPin}.
+   */
   readonly onPick: (target: PinTarget) => void;
+  /**
+   * Called once with the finalized {@link Pin} when the user clicks Send in
+   * the comment sheet. Not fired when the user clicks Cancel.
+   */
+  readonly onSubmitPin: (pin: Pin) => void;
 }
 
 /** Public handle returned by {@link initOverlay}. */
@@ -190,9 +205,32 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
   shadow.appendChild(toggleButton.element);
   shadow.appendChild(highlightBox.element);
   shadow.appendChild(highlightBox.label);
+  const commentSheetHandle: CommentSheetHandle = createCommentSheet({
+    shadow,
+    onSubmit: (pin) => opts.onSubmitPin(pin),
+    onCancel: () => {
+      /* close lifecycle is handled inside the sheet */
+    },
+  });
 
   let state: OverlayState = { phase: 'idle' };
   let lastHoverEl: Element | null = null;
+
+  const handlePickConfirmed = async (
+    el: Element,
+    target: PinTarget,
+  ): Promise<void> => {
+    const computedStyles = captureComputedStyles(el);
+    const elementBlob = await captureElement(el);
+    const viewportBlob = await captureViewport(target.bbox);
+    commentSheetHandle.open({
+      target,
+      elementBlob,
+      viewportBlob,
+      bbox: target.bbox,
+      computedStyles,
+    });
+  };
 
   const isOverlayOwned = (node: EventTarget): boolean => {
     if (node === opts.root || node === shadow) {
@@ -241,6 +279,7 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
       state = { phase: 'idle' };
       highlightBox.hide();
       opts.onPick(target);
+      void handlePickConfirmed(walked, target);
       return;
     }
     state = { phase: 'pending', el: walked };
@@ -304,6 +343,7 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
       modeUnsubscribe();
       toggleButton.destroy();
       highlightBox.destroy();
+      commentSheetHandle.destroy();
       while (shadow.firstChild) {
         shadow.removeChild(shadow.firstChild);
       }

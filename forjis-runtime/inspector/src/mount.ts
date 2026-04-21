@@ -145,6 +145,10 @@ export function mount(options?: InspectorMountOptions): InspectorMountHandle {
     onPick: () => {
       /* task-010: enqueue pin */
     },
+    onSubmitPin: (pin) => {
+      /* task-010: enqueue pin */
+      void pin;
+    },
   });
   const handle = buildHandle(client, root, overlay);
   currentHandle = handle;
