@@ -7,6 +7,7 @@
 
 import type { Pin, PinTarget } from '@forjis/shared';
 import { captureElement } from '../capture/element.js';
+import { captureRegion } from '../capture/region.js';
 import { captureComputedStyles } from '../capture/styles.js';
 import { captureViewport } from '../capture/viewport.js';
 import {
@@ -15,9 +16,16 @@ import {
   readComponentName,
   readSourceInfo,
 } from '../pick/source-info.js';
+import { initRegionPicker, type RegionPickerHandle } from '../pick/region.js';
+import { getCurrentScreen } from '../queue/screen-tracker.js';
 import { createCommentSheet, type CommentSheetHandle } from './comment-sheet.js';
 import { createHighlightBox, type HighlightBoxHandle } from './highlight-box.js';
 import { getMode, onModeChange, type Unsubscribe } from './mode.js';
+import {
+  getTool,
+  onToolChange,
+  setTool,
+} from './picker-tool.js';
 import { createToggleButton, type ToggleButtonHandle } from './toggle-button.js';
 
 /** Options accepted by {@link initOverlay}. */
@@ -51,27 +59,57 @@ type OverlayState =
 
 const OVERLAY_STYLE = `
 :host, :root { all: initial; }
-button[data-forjis-role="toggle"] {
+div[data-forjis-role="toggle-container"] {
   position: fixed;
   right: 16px;
   bottom: 16px;
   pointer-events: auto;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
   background: #1f2937;
   color: #f9fafb;
   border: 1px solid #374151;
   border-radius: 999px;
-  padding: 8px 14px;
-  font: 500 13px/1 system-ui, -apple-system, sans-serif;
-  cursor: pointer;
+  padding: 4px;
   box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+  font: 500 13px/1 system-ui, -apple-system, sans-serif;
+}
+div[data-forjis-role="toggle-container"] button {
+  pointer-events: auto;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  min-height: 28px;
+  min-width: 28px;
+  font: inherit;
+  cursor: pointer;
 }
 button[data-forjis-role="toggle"][data-mode="inspect"] {
   background: #2563eb;
   border-color: #1d4ed8;
+  color: #ffffff;
 }
-button[data-forjis-role="toggle"]:focus-visible {
+div[data-forjis-role="toggle-container"] button:hover {
+  background: rgba(255,255,255,0.08);
+}
+div[data-forjis-role="toggle-container"] button:active {
+  background: rgba(255,255,255,0.16);
+}
+div[data-forjis-role="toggle-container"] button:focus-visible {
   outline: 2px solid #60a5fa;
   outline-offset: 2px;
+}
+button[data-forjis-role="tool-element"][data-visible="false"],
+button[data-forjis-role="tool-region"][data-visible="false"] {
+  display: none;
+}
+button[data-forjis-role="tool-element"][data-active="true"],
+button[data-forjis-role="tool-region"][data-active="true"] {
+  background: #2563eb;
+  color: #ffffff;
 }
 div[data-forjis-role="highlight"] {
   position: fixed;
@@ -211,25 +249,54 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
     onCancel: () => {
       /* close lifecycle is handled inside the sheet */
     },
+    onAddAnotherPin: () => {
+      // Re-arm picker mode: the sheet has already hidden itself; the current
+      // tool remains active. setTool with the same value is a no-op but
+      // keeps the callback shape for future expansion.
+      setTool(getTool());
+    },
   });
 
   let state: OverlayState = { phase: 'idle' };
   let lastHoverEl: Element | null = null;
 
-  const handlePickConfirmed = async (
+  const dispatchToSheet = (
+    target: PinTarget,
+    elementBlob: Blob,
+    viewportBlob: Blob,
+    computedStyles: Record<string, string>,
+  ): void => {
+    const screen = getCurrentScreen();
+    const ctx = {
+      target,
+      elementBlob,
+      viewportBlob,
+      bbox: target.bbox,
+      computedStyles,
+      screen,
+    } as const;
+    if (commentSheetHandle.isOpen()) {
+      commentSheetHandle.addPinToGroup(ctx);
+      return;
+    }
+    commentSheetHandle.open(ctx);
+  };
+
+  const handleElementPickConfirmed = async (
     el: Element,
     target: PinTarget,
   ): Promise<void> => {
     const computedStyles = captureComputedStyles(el);
     const elementBlob = await captureElement(el);
     const viewportBlob = await captureViewport(target.bbox);
-    commentSheetHandle.open({
-      target,
-      elementBlob,
-      viewportBlob,
-      bbox: target.bbox,
-      computedStyles,
-    });
+    dispatchToSheet(target, elementBlob, viewportBlob, computedStyles);
+  };
+
+  const handleRegionPickConfirmed = async (
+    target: PinTarget,
+  ): Promise<void> => {
+    const { regionPng, viewportPng } = await captureRegion(target.bbox);
+    dispatchToSheet(target, regionPng, viewportPng, {});
   };
 
   const isOverlayOwned = (node: EventTarget): boolean => {
@@ -242,6 +309,15 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
     return false;
   };
 
+  const regionPickerHandle: RegionPickerHandle = initRegionPicker({
+    shadow,
+    isOverlayOwned,
+    onRegionPick: (target) => {
+      opts.onPick(target);
+      void handleRegionPickConfirmed(target);
+    },
+  });
+
   const drawPending = (el: Element): void => {
     highlightBox.update(computeBbox(el), 'pending', buildPendingLabel(el));
   };
@@ -252,6 +328,9 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
 
   const onDocumentClick = (e: MouseEvent): void => {
     if (getMode() === 'use') {
+      return;
+    }
+    if (getTool() !== 'element') {
       return;
     }
     const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
@@ -279,7 +358,7 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
       state = { phase: 'idle' };
       highlightBox.hide();
       opts.onPick(target);
-      void handlePickConfirmed(walked, target);
+      void handleElementPickConfirmed(walked, target);
       return;
     }
     state = { phase: 'pending', el: walked };
@@ -288,6 +367,9 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
 
   const onDocumentPointerMove = (e: PointerEvent): void => {
     if (getMode() === 'use') {
+      return;
+    }
+    if (getTool() !== 'element') {
       return;
     }
     if (e.pointerType === 'touch') {
@@ -326,6 +408,16 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
     }
   });
 
+  const toolUnsubscribe: Unsubscribe = onToolChange(() => {
+    // Clear in-flight element-pick state when the tool switches so the
+    // stale pending highlight does not linger into the region gesture.
+    if (state.phase === 'pending') {
+      state = { phase: 'idle' };
+      highlightBox.hide();
+    }
+    lastHoverEl = null;
+  });
+
   document.addEventListener('click', onDocumentClick, { capture: true });
   document.addEventListener('pointermove', onDocumentPointerMove, { capture: true });
   document.addEventListener('keydown', onDocumentKeyDown);
@@ -341,6 +433,8 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
       document.removeEventListener('pointermove', onDocumentPointerMove, { capture: true });
       document.removeEventListener('keydown', onDocumentKeyDown);
       modeUnsubscribe();
+      toolUnsubscribe();
+      regionPickerHandle.destroy();
       toggleButton.destroy();
       highlightBox.destroy();
       commentSheetHandle.destroy();

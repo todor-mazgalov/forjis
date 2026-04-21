@@ -69,6 +69,24 @@ describe('buildPin', () => {
     expect(pin.target).toEqual(target);
     expect(pin.comment).toBe('needs padding');
     expect(pin.parentPinId).toBeNull();
+    expect(pin.commentGroupId).toBeNull();
+  });
+
+  it('threads commentGroupId and screen through from BuildPinOptions', async () => {
+    const target = makeTarget(null);
+    const pin = await buildPin(
+      target,
+      '',
+      [],
+      {
+        elementPng: makeStubPng(),
+        viewportPng: makeStubPng(),
+        computedStyles: {},
+      },
+      { commentGroupId: 'group-42', screen: '/pin-time' },
+    );
+    expect(pin.commentGroupId).toBe('group-42');
+    expect(pin.screen).toBe('/pin-time');
   });
 
   it('preserves target.source taken from data-forjis-src', async () => {

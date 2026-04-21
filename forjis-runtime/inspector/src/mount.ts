@@ -1,22 +1,36 @@
 /**
  * DOM entry point for the browser-side Forjis Inspector SDK.
  *
- * `mount()` is the single caller-facing hook that ships in the scaffold. It
- * resolves the session URL and token (from explicit arguments or the
- * `<meta name="forjis-inspector-*">` tags injected by the Vite plugin),
- * attaches a `<div id="forjis-inspector-root">` placeholder to `document.body`
- * for later overlay UI, and opens an {@link InspectorClient} against the
- * resolved URL.
+ * `mount()` resolves the session URL and token (explicit or meta-tag),
+ * appends `<div id="forjis-inspector-root">`, initializes the screen
+ * tracker, rehydrates BatchState from sessionStorage, constructs the
+ * transport, mounts the overlay + queue panel inside the overlay shadow,
+ * and wires the cross-component callbacks defined in design.md §D-012.
  *
- * Later Inspector tasks (008–011) render into the root div and call
- * `handle.send(...)` to originate `pin.*` / `batch.*` / `clarify.*` traffic.
- * This scaffold ships only transport + DOM root so those later tasks have a
- * stable place to compose.
+ * Teardown order (FR-010-019 panel removal, FR-010-012 sessionStorage
+ * preserved for reload): queue panel → overlay → screen tracker →
+ * client → root removal. BatchState is NOT destroyed on unmount so a
+ * reload can restore it.
  */
 
-import type { InspectorMessage } from '@forjis/shared';
+import type { InspectorMessage, Pin } from '@forjis/shared';
+import {
+  addPin as batchAddPin,
+  clear as batchClear,
+  getBatch,
+  initBatchState,
+  setStatus as batchSetStatus,
+} from './queue/batch-state.js';
+import {
+  destroyScreenTracker,
+  initScreenTracker,
+} from './queue/screen-tracker.js';
 import { InspectorClient } from './transport.js';
 import { initOverlay, type OverlayHandle } from './ui/overlay.js';
+import {
+  createQueuePanel,
+  type QueuePanelHandle,
+} from './ui/queue-panel.js';
 
 /** `id` of the root placeholder element appended to `document.body`. */
 const ROOT_ELEMENT_ID = 'forjis-inspector-root';
@@ -37,28 +51,18 @@ const META_TOKEN_NAME = 'forjis-inspector-token';
 export interface InspectorMountOptions {
   /** Explicit WebSocket URL. Overrides the meta tag when present. */
   readonly url?: string;
-
   /** Explicit session token. Overrides the meta tag when present. */
   readonly token?: string;
 }
 
 /**
  * Handle returned by {@link mount}.
- *
- * Later UI tasks call `send` to originate Inspector messages, await `ready`
- * before surfacing connect state, and call `unmount` during page teardown.
  */
 export interface InspectorMountHandle {
   /** Resolves on the first `session.ack`, rejects on first-connect failure. */
   readonly ready: Promise<void>;
-
-  /**
-   * Send an outbound {@link InspectorMessage}. Queues until `ready` resolves.
-   *
-   * @param msg - Inspector message to deliver.
-   */
+  /** Send an outbound {@link InspectorMessage}. Queues until `ready` resolves. */
   send(msg: InspectorMessage): void;
-
   /** Close the session and remove the DOM root. Idempotent. */
   unmount(): void;
 }
@@ -67,9 +71,6 @@ let currentHandle: InspectorMountHandle | null = null;
 
 /**
  * Return the currently-active mount handle, or `null` when nothing is mounted.
- *
- * Used internally by `unmount.ts` so the free-function `unmount()` export can
- * delegate to the active handle without a circular import of {@link mount}.
  *
  * @returns Active mount handle or `null`.
  */
@@ -80,12 +81,8 @@ export function getCurrentHandle(): InspectorMountHandle | null {
 /**
  * Read a `<meta name="...">` tag's `content` attribute from the current DOM.
  *
- * Returns `null` when the tag is absent, when it has no `content` attribute,
- * or when `content` is the empty string (the meta-tag contract treats an
- * empty value as "unset" so the caller falls through to the error path).
- *
  * @param name - Value of the tag's `name` attribute.
- * @returns The `content` string or `null`.
+ * @returns The `content` string or `null` when absent or empty.
  */
 function readMetaTag(name: string): string | null {
   const selector = 'meta[name="' + name + '"]';
@@ -101,25 +98,15 @@ function readMetaTag(name: string): string | null {
 }
 
 /**
- * Mount the Forjis Inspector into the current document.
+ * Resolve the session URL and token, throwing on missing configuration.
  *
- * Side effects (synchronous, before the function returns):
- * - Appends `<div id="forjis-inspector-root">` to `document.body`.
- * - Constructs an {@link InspectorClient} and opens its WebSocket.
- *
- * Throws synchronously on the following configuration errors:
- * - A prior mount handle is still active (double-mount).
- * - Neither `options.url` nor the `forjis-inspector-url` meta tag is set.
- * - Neither `options.token` nor the `forjis-inspector-token` meta tag is set.
- *
- * @param options - Optional URL/token overrides; see {@link InspectorMountOptions}.
- * @returns A handle with `ready`, `send`, and `unmount`.
- * @throws {Error} On double-mount or missing configuration.
+ * @param options - Optional caller-supplied overrides.
+ * @returns `{ url, token }` tuple.
  */
-export function mount(options?: InspectorMountOptions): InspectorMountHandle {
-  if (currentHandle !== null) {
-    throw new Error('forjis-inspector: already mounted; call unmount() first');
-  }
+function resolveConfig(options?: InspectorMountOptions): {
+  url: string;
+  token: string;
+} {
   const url = options?.url ?? readMetaTag(META_URL_NAME);
   if (!url) {
     throw new Error(
@@ -136,21 +123,128 @@ export function mount(options?: InspectorMountOptions): InspectorMountHandle {
         '">)',
     );
   }
+  return { url, token };
+}
+
+/**
+ * Build the `handleInboundMsg` callback passed to {@link InspectorClient}.
+ *
+ * Clears the local batch when the server sends `batch.finalize` for the
+ * current batch id or `task.status` with a terminal status for the current
+ * batch id (FR-010-029).
+ *
+ * @returns Typed message handler.
+ */
+function createInboundHandler(): (msg: InspectorMessage) => void {
+  return (msg) => {
+    const current = getBatch();
+    if (!current) {
+      return;
+    }
+    if (msg.type === 'batch.finalize' && msg.batchId === current.id) {
+      batchClear();
+      return;
+    }
+    if (
+      msg.type === 'task.status' &&
+      msg.batchId === current.id &&
+      (msg.status === 'done' || msg.status === 'failed')
+    ) {
+      batchClear();
+    }
+  };
+}
+
+/**
+ * Send `pin.create * N` followed by one `batch.submit` and flip local
+ * status to `"clarifying"` (FR-010-027, FR-010-028). Does NOT clear the
+ * local queue — only terminal server messages do (see
+ * {@link createInboundHandler}).
+ *
+ * @param client - Transport client.
+ */
+function submitBatch(client: InspectorClient): void {
+  const batch = getBatch();
+  if (!batch || batch.pins.length === 0) {
+    return;
+  }
+  for (const pin of batch.pins) {
+    client.send({ type: 'pin.create', batchId: batch.id, pin });
+  }
+  client.send({ type: 'batch.submit', batchId: batch.id });
+  batchSetStatus('clarifying');
+}
+
+/**
+ * Navigate to a pin's original screen and scroll its bbox into view.
+ * Best-effort: host-app routers may re-render asynchronously, so the
+ * scroll is deferred one `requestAnimationFrame` (FR-010-025).
+ *
+ * @param pin - Pin to navigate to.
+ */
+function navigateToPin(pin: Pin): void {
+  if (pin.screen === null) {
+    return;
+  }
+  if (window.location.pathname !== pin.screen) {
+    history.pushState({}, '', pin.screen);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }
+  const doScroll = (): void => {
+    const targetY = Math.max(
+      0,
+      pin.target.bbox.y - window.innerHeight / 2 + pin.target.bbox.h / 2,
+    );
+    window.scrollTo({ top: targetY, behavior: 'auto' });
+  };
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(doScroll);
+    return;
+  }
+  doScroll();
+}
+
+/**
+ * Mount the Forjis Inspector into the current document.
+ *
+ * @param options - Optional URL/token overrides.
+ * @returns A handle with `ready`, `send`, and `unmount`.
+ * @throws {Error} On double-mount or missing configuration.
+ */
+export function mount(options?: InspectorMountOptions): InspectorMountHandle {
+  if (currentHandle !== null) {
+    throw new Error('forjis-inspector: already mounted; call unmount() first');
+  }
+  const { url, token } = resolveConfig(options);
   const root = document.createElement('div');
   root.id = ROOT_ELEMENT_ID;
   document.body.appendChild(root);
-  const client = new InspectorClient({ url, token });
+  initScreenTracker();
+  initBatchState(token);
+  const client = new InspectorClient({
+    url,
+    token,
+    onMessage: createInboundHandler(),
+  });
   const overlay = initOverlay({
     root,
     onPick: () => {
-      /* task-010: enqueue pin */
+      /* onSubmitPin receives the finalized pin via the comment-sheet Send path */
     },
     onSubmitPin: (pin) => {
-      /* task-010: enqueue pin */
-      void pin;
+      batchAddPin(pin);
     },
   });
-  const handle = buildHandle(client, root, overlay);
+  const shadow = root.shadowRoot;
+  if (!shadow) {
+    throw new Error('forjis-inspector: overlay failed to attach shadow root');
+  }
+  const queuePanel = createQueuePanel({
+    shadow,
+    onSubmitBatch: () => submitBatch(client),
+    onNavigateToPin: (pin) => navigateToPin(pin),
+  });
+  const handle = buildHandle(client, root, overlay, queuePanel);
   currentHandle = handle;
   return handle;
 }
@@ -158,20 +252,21 @@ export function mount(options?: InspectorMountOptions): InspectorMountHandle {
 /**
  * Build the {@link InspectorMountHandle} returned by {@link mount}.
  *
- * Extracted to keep `mount()` under the 40-line guideline and to isolate the
- * teardown closure that clears the module-local `currentHandle`. Unmount
- * order: overlay teardown → transport close → DOM removal.
+ * Teardown order: queue panel → overlay → screen tracker → transport →
+ * root removal. BatchState is NOT destroyed so a reload can rehydrate it
+ * via `initBatchState` on the next mount.
  *
  * @param client - The freshly-constructed transport client.
  * @param root - The root DOM element to remove on unmount.
- * @param overlay - The overlay handle whose `destroy()` runs first.
- * @returns A mount handle wired to {@link client}, {@link root}, and
- *   {@link overlay}.
+ * @param overlay - Overlay handle.
+ * @param queuePanel - Queue panel handle.
+ * @returns A mount handle.
  */
 function buildHandle(
   client: InspectorClient,
   root: HTMLDivElement,
   overlay: OverlayHandle,
+  queuePanel: QueuePanelHandle,
 ): InspectorMountHandle {
   const handle: InspectorMountHandle = {
     ready: client.ready,
@@ -181,7 +276,9 @@ function buildHandle(
         return;
       }
       currentHandle = null;
+      queuePanel.destroy();
       overlay.destroy();
+      destroyScreenTracker();
       client.close();
       if (root.parentNode) {
         root.parentNode.removeChild(root);

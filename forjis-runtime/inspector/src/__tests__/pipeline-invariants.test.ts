@@ -146,5 +146,6 @@ describe('buildPin invariants', () => {
     // Assert
     expect(pin.parentPinId).toBeNull();
     expect(pin.platform).toBe('web');
+    expect(pin.commentGroupId).toBeNull();
   });
 });

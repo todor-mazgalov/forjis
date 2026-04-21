@@ -17,6 +17,7 @@
  */
 
 import type { InspectorMessage, Platform } from '@forjis/shared';
+import { generateUuid } from './util/uuid.js';
 
 // ---------------------------------------------------------------------------
 // State-machine + queue + reconnect constants
@@ -189,7 +190,7 @@ export class InspectorClient {
   public constructor(options: InspectorClientOptions) {
     this.options = options;
     this.platform = options.platform ?? 'web';
-    this.clientId = options.clientId ?? generateClientId();
+    this.clientId = options.clientId ?? generateUuid();
     this.factory = options.webSocketFactory ?? ((url) => new WebSocket(url));
     let resolveFn: () => void = () => undefined;
     let rejectFn: (err: InspectorSessionError) => void = () => undefined;
@@ -533,21 +534,3 @@ function computeBackoffDelay(attempt: number): number {
   return Math.max(0, raw + jitter);
 }
 
-/**
- * Generate a non-empty client identifier for `session.join`.
- *
- * Prefers the standardised `crypto.randomUUID()` when available (modern
- * browsers and jsdom >=22). Falls back to a timestamp + random hex blob so
- * the SDK never emits an empty `clientId` (the facilitator's validator
- * rejects it).
- *
- * @returns Non-empty client identifier string.
- */
-function generateClientId(): string {
-  const g = globalThis as { crypto?: { randomUUID?: () => string } };
-  if (g.crypto && typeof g.crypto.randomUUID === 'function') {
-    return g.crypto.randomUUID();
-  }
-  const rand = Math.floor(Math.random() * 0xffffffff).toString(16);
-  return 'client-' + String(Date.now()) + '-' + rand;
-}
