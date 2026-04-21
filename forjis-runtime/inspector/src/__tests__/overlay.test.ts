@@ -153,7 +153,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-005: two clicks on the same element emit one PinTarget', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('inspect');
     const target = document.createElement('div');
     target.id = 'target';
@@ -185,7 +185,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-005: second click on a different element swaps pending without firing onPick', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('inspect');
     const el1 = document.createElement('div');
     el1.id = 'el1';
@@ -206,7 +206,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-006: Escape cancels pending and subsequent click re-enters pending (no confirm)', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('inspect');
     const el = document.createElement('div');
     el.id = 'only';
@@ -219,7 +219,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-006: click on empty space (document.body) clears pending', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('inspect');
     const el = document.createElement('div');
     el.id = 'only2';
@@ -237,7 +237,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-007: use mode passes clicks through to host listeners', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('use');
     const el = document.createElement('div');
     el.id = 'host';
@@ -251,7 +251,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-010: clicking the toggle button does not fire onPick in inspect mode', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('inspect');
     const btn = root.shadowRoot?.querySelector<HTMLButtonElement>(
       '[data-forjis-role="toggle"]',
@@ -263,7 +263,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-008: touch pointerdown does not show hover; two clicks confirm', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('inspect');
     const el = document.createElement('div');
     el.id = 'touchtarget';
@@ -299,7 +299,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-004: pointermove in inspect mode sets hover highlight variant', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('inspect');
     const el = document.createElement('div');
     el.id = 'hovertarget';
@@ -331,7 +331,7 @@ describe('overlay via initOverlay directly (no transport)', () => {
   });
 
   it('FR-012: destroy removes listeners — subsequent clicks do not fire onPick', () => {
-    const overlay = initOverlay({ root, onPick });
+    const overlay = initOverlay({ root, onPick, onSubmitPin: jest.fn() });
     setMode('inspect');
     const el = document.createElement('div');
     el.id = 'post-destroy';
