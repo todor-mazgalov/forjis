@@ -13,7 +13,8 @@
     "facilitator",
     "resolver",
     "web",
-    "orchestrator"
+    "orchestrator",
+    "inspector"
   ],
   "scripts": {
     "build": "node build.mjs",
