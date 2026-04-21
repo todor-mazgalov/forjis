@@ -45,12 +45,45 @@ export interface InitOverlayOptions {
    * the comment sheet. Not fired when the user clicks Cancel.
    */
   readonly onSubmitPin: (pin: Pin) => void;
+  /**
+   * Optional middleware invoked AFTER capture blobs are produced but
+   * BEFORE the comment sheet is opened. Returning `true` suppresses the
+   * comment-sheet dispatch — the caller (`mount.ts`) owns the capture
+   * bundle and is responsible for either invoking
+   * {@link OverlayHandle.dispatchPendingCapture} later or discarding it.
+   * Additive extension (task-011, design.md §D-004).
+   */
+  readonly onPickConfirmed?: (
+    el: Element,
+    target: PinTarget,
+    blobs: {
+      elementBlob: Blob;
+      viewportBlob: Blob;
+      computedStyles: Record<string, string>;
+    },
+  ) => boolean;
 }
 
 /** Public handle returned by {@link initOverlay}. */
 export interface OverlayHandle {
   /** Remove all listeners and clear the shadow root. Idempotent. */
   destroy(): void;
+  /**
+   * Forward a previously-captured bundle (held by `mount.ts` across a
+   * reply-banner decline) to the comment sheet as if the pick had just
+   * been confirmed. Additive extension (task-011, design.md §D-004).
+   *
+   * @param target - `PinTarget` captured at pick-confirm time.
+   * @param blobs - Blobs + computed styles captured alongside the target.
+   */
+  dispatchPendingCapture(
+    target: PinTarget,
+    blobs: {
+      elementBlob: Blob;
+      viewportBlob: Blob;
+      computedStyles: Record<string, string>;
+    },
+  ): void;
 }
 
 type OverlayState =
@@ -289,6 +322,16 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
     const computedStyles = captureComputedStyles(el);
     const elementBlob = await captureElement(el);
     const viewportBlob = await captureViewport(target.bbox);
+    if (opts.onPickConfirmed) {
+      const suppressed = opts.onPickConfirmed(el, target, {
+        elementBlob,
+        viewportBlob,
+        computedStyles,
+      });
+      if (suppressed) {
+        return;
+      }
+    }
     dispatchToSheet(target, elementBlob, viewportBlob, computedStyles);
   };
 
@@ -441,6 +484,17 @@ export function initOverlay(opts: InitOverlayOptions): OverlayHandle {
       while (shadow.firstChild) {
         shadow.removeChild(shadow.firstChild);
       }
+    },
+    dispatchPendingCapture(target, blobs) {
+      if (destroyed) {
+        return;
+      }
+      dispatchToSheet(
+        target,
+        blobs.elementBlob,
+        blobs.viewportBlob,
+        blobs.computedStyles,
+      );
     },
   };
 }

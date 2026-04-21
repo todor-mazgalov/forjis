@@ -70,6 +70,12 @@ export interface BuildPinOptions {
   readonly commentGroupId?: string | null;
   /** Screen pathname captured at pick time; falls back to the tracker. */
   readonly screen?: string | null;
+  /**
+   * Parent pin identifier set by the reply flow. `null` / `undefined`
+   * preserves the pre-task-011 default; explicit string values thread
+   * through to `pin.parentPinId` unchanged (FR-011-024).
+   */
+  readonly parentPinId?: string | null;
 }
 
 /**
@@ -135,7 +141,7 @@ export async function buildPin(
     capture,
     comment,
     createdAt: new Date().toISOString(),
-    parentPinId: null,
+    parentPinId: opts?.parentPinId ?? null,
     commentGroupId: opts?.commentGroupId ?? null,
   };
   return pin;
