@@ -7,7 +7,7 @@
  */
 
 import { Server } from 'mock-socket';
-import type { Pin } from '@forjis/shared';
+import type { Batch, Pin } from '@forjis/shared';
 import { mount } from '../mount.js';
 import {
   __resetBatchStateForTests,
@@ -15,6 +15,10 @@ import {
   getBatch,
 } from '../queue/batch-state.js';
 import { __resetScreenTrackerForTests } from '../queue/screen-tracker.js';
+import {
+  __resetHistoryStoreForTests,
+  getHistory,
+} from '../history/history-store.js';
 import { unmount } from '../unmount.js';
 
 const TEST_URL = 'ws://localhost:9998/inspector/ws';
@@ -28,7 +32,9 @@ describe('mount()', () => {
     document.head.innerHTML = '';
     __resetBatchStateForTests();
     __resetScreenTrackerForTests();
+    __resetHistoryStoreForTests();
     sessionStorage.clear();
+    localStorage.clear();
   });
 
   afterEach(() => {
@@ -93,7 +99,9 @@ describe('unmount()', () => {
     document.head.innerHTML = '';
     __resetBatchStateForTests();
     __resetScreenTrackerForTests();
+    __resetHistoryStoreForTests();
     sessionStorage.clear();
+    localStorage.clear();
   });
 
   afterEach(() => {
@@ -145,7 +153,9 @@ describe('mount() integration with BatchState + queue panel', () => {
     document.head.innerHTML = '';
     __resetBatchStateForTests();
     __resetScreenTrackerForTests();
+    __resetHistoryStoreForTests();
     sessionStorage.clear();
+    localStorage.clear();
   });
 
   afterEach(() => {
@@ -156,7 +166,9 @@ describe('mount() integration with BatchState + queue panel', () => {
     }
     __resetBatchStateForTests();
     __resetScreenTrackerForTests();
+    __resetHistoryStoreForTests();
     sessionStorage.clear();
+    localStorage.clear();
   });
 
   /**
@@ -255,5 +267,301 @@ describe('mount() integration with BatchState + queue panel', () => {
     // Either null (never written) or a valid payload — what matters is
     // that unmount did NOT programmatically clear it.
     expect(stored === null || stored.length > 0).toBe(true);
+  });
+});
+
+describe('mount() task-011 clarify + history + reply wiring', () => {
+  let server: Server | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    document.head.innerHTML = '';
+    __resetBatchStateForTests();
+    __resetScreenTrackerForTests();
+    __resetHistoryStoreForTests();
+    sessionStorage.clear();
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    unmount();
+    if (server) {
+      server.stop();
+      server = null;
+    }
+    __resetBatchStateForTests();
+    __resetScreenTrackerForTests();
+    __resetHistoryStoreForTests();
+    sessionStorage.clear();
+    localStorage.clear();
+  });
+
+  /** Build a deterministic Pin for the integration tests. */
+  function makePin(id: string): Pin {
+    return {
+      id,
+      platform: 'web',
+      screen: '/a',
+      target: {
+        kind: 'element',
+        source: null,
+        selector: '#' + id,
+        componentName: null,
+        bbox: { x: 0, y: 0, w: 1, h: 1 },
+      },
+      capture: {
+        elementScreenshot: 'data:image/png;base64,AAAA',
+        viewportScreenshot: 'data:image/png;base64,AAAA',
+        computedStyles: '{}',
+        annotations: [],
+      },
+      comment: '',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      parentPinId: null,
+      commentGroupId: null,
+    };
+  }
+
+  /** Push a session.ack and wait for the client to go ready. */
+  async function startReady(): Promise<{ batchId: string }> {
+    const opened = new Promise<void>((resolve) => {
+      server?.on('connection', (socket) => {
+        socket.send(
+          JSON.stringify({
+            type: 'session.ack',
+            sessionId: 's',
+            protocolVersion: 'forjis-inspector/1.0',
+          }),
+        );
+        resolve();
+      });
+    });
+    const handle = mount({ url: TEST_URL, token: TEST_TOKEN });
+    await opened;
+    await handle.ready;
+    batchAddPin(makePin('p-1'));
+    return { batchId: getBatch()!.id };
+  }
+
+  /** Send a frame from server to every connected client. */
+  function broadcast(msg: unknown): void {
+    server?.clients().forEach((c) => {
+      c.send(JSON.stringify(msg));
+    });
+  }
+
+  it('FR-011-030 — clarify.question reaches the clarify panel', async () => {
+    server = new Server(TEST_URL);
+    const { batchId } = await startReady();
+    broadcast({
+      type: 'clarify.question',
+      batchId,
+      question: {
+        id: 'q1',
+        text: 'Which footer?',
+        options: [
+          { id: 'a', label: 'Primary', description: '' },
+          { id: 'b', label: 'Secondary', description: '' },
+        ],
+        allowFreeText: false,
+      },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    const root = document.getElementById('forjis-inspector-root');
+    const entry = root?.shadowRoot?.querySelector(
+      '.clarify-question[data-question-id="q1"]',
+    );
+    expect(entry).not.toBeNull();
+  });
+
+  it('FR-011-030 — batch.finalize pushes active batch into history and clears BatchState', async () => {
+    server = new Server(TEST_URL);
+    const { batchId } = await startReady();
+    batchAddPin(makePin('p-2'));
+    broadcast({
+      type: 'batch.finalize',
+      batchId,
+      taskPath: '/tmp/t',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getBatch()).toBeNull();
+    const history = getHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0].batch.id).toBe(batchId);
+    expect(history[0].taskPath).toBe('/tmp/t');
+    expect(history[0].batch.pins).toHaveLength(2);
+  });
+
+  it('FR-011-030 — task.status summary updates stored history entry', async () => {
+    server = new Server(TEST_URL);
+    const { batchId } = await startReady();
+    broadcast({
+      type: 'batch.finalize',
+      batchId,
+      taskPath: '/tmp/t',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    broadcast({
+      type: 'task.status',
+      batchId,
+      status: 'done',
+      summary: 'diff',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    const entry = getHistory().find((e) => e.batch.id === batchId);
+    expect(entry?.summary).toBe('diff');
+    expect(entry?.batch.status).toBe('done');
+  });
+
+  /**
+   * Seed the history store with a parent batch + pin under the same
+   * session token the mount uses.
+   */
+  function seedHistoryFor(token: string): {
+    parentPinId: string;
+    parentBatchId: string;
+  } {
+    const parentPin = makePin('p-parent');
+    const parentBatch: Batch = {
+      id: 'b-parent-42',
+      platform: 'web',
+      screens: ['/a'],
+      pins: [parentPin],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      parentBatchId: null,
+      status: 'done',
+    };
+    const payload = {
+      token,
+      entries: [
+        {
+          batch: parentBatch,
+          taskPath: '/tmp/parent',
+          summary: null,
+          finalizedAt: '2026-04-22T10:00:00.000Z',
+        },
+      ],
+    };
+    localStorage.setItem(
+      'forjis-inspector:history',
+      JSON.stringify(payload),
+    );
+    return { parentPinId: parentPin.id, parentBatchId: parentBatch.id };
+  }
+
+  it('FR-011-031 — sidebar reply opens the sheet; Send dispatches pin.create + batch.submit in order with parentPinId', async () => {
+    server = new Server(TEST_URL);
+    const outbound: Array<{ type: string; payload: unknown }> = [];
+    server.on('connection', (socket) => {
+      socket.send(
+        JSON.stringify({
+          type: 'session.ack',
+          sessionId: 's',
+          protocolVersion: 'forjis-inspector/1.0',
+        }),
+      );
+      (
+        socket as unknown as {
+          on: (ev: string, h: (raw: string) => void) => void;
+        }
+      ).on('message', (raw: string) => {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.type === 'session.join') {
+            return;
+          }
+          outbound.push({ type: parsed.type, payload: parsed });
+        } catch {
+          /* ignore */
+        }
+      });
+    });
+    const { parentPinId, parentBatchId } = seedHistoryFor(TEST_TOKEN);
+    const handle = mount({ url: TEST_URL, token: TEST_TOKEN });
+    await handle.ready;
+    const root = document.getElementById('forjis-inspector-root');
+    const shadow = root?.shadowRoot;
+    expect(shadow).not.toBeNull();
+    // Expand the parent batch card, click Reply on the first pin.
+    const expandBtn = shadow?.querySelector(
+      '.sidebar-batch-card[data-batch-id="' +
+        parentBatchId +
+        '"] .sidebar-batch-expand',
+    ) as HTMLButtonElement | null;
+    expect(expandBtn).not.toBeNull();
+    expandBtn?.click();
+    const replyBtn = shadow?.querySelector(
+      '[data-forjis-sidebar-reply]',
+    ) as HTMLButtonElement | null;
+    expect(replyBtn).not.toBeNull();
+    replyBtn?.click();
+    // Reply sheet should be open; type comment + Send.
+    const replySheet = shadow?.querySelector(
+      '[data-forjis-reply-sheet]',
+    ) as HTMLElement | null;
+    expect(replySheet?.getAttribute('data-open')).toBe('true');
+    const textarea = shadow?.querySelector(
+      '.reply-comment',
+    ) as HTMLTextAreaElement | null;
+    expect(textarea).not.toBeNull();
+    if (textarea) {
+      textarea.value = 'still broken';
+    }
+    const sendBtn = shadow?.querySelector(
+      '.reply-send-btn',
+    ) as HTMLButtonElement | null;
+    sendBtn?.click();
+    // Allow buildPin + fetch microtasks to settle.
+    await new Promise((r) => setTimeout(r, 50));
+    // Expect pin.create then batch.submit, both for the same new UUID, with
+    // parentPinId set.
+    const kinds = outbound.map((o) => o.type);
+    const createIdx = kinds.indexOf('pin.create');
+    const submitIdx = kinds.indexOf('batch.submit');
+    expect(createIdx).toBeGreaterThanOrEqual(0);
+    expect(submitIdx).toBeGreaterThan(createIdx);
+    const createMsg = outbound[createIdx].payload as {
+      batchId: string;
+      pin: Pin;
+    };
+    const submitMsg = outbound[submitIdx].payload as { batchId: string };
+    expect(createMsg.batchId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(submitMsg.batchId).toBe(createMsg.batchId);
+    expect(createMsg.pin.parentPinId).toBe(parentPinId);
+    expect(createMsg.pin.comment).toBe('still broken');
+    // FR-011-023 / TASK.md acceptance #8 — the reply batch is a new batch,
+    // distinct from the parent batch. The wire frame for `batch.submit`
+    // carries only `batchId`, so parent linkage is observable here by
+    // asserting the new batchId differs from the seeded parent. The
+    // `parentBatchId` value itself is threaded from the reply-sheet's
+    // context (covered by `reply-sheet.test.ts`) into the new Batch
+    // constructed in `mount.ts:dispatchReplyBatch` (covered by source
+    // inspection per review.md §3 / §5.3).
+    expect(createMsg.batchId).not.toBe(parentBatchId);
+    expect(submitMsg.batchId).not.toBe(parentBatchId);
+  });
+
+  it('FR-011-030 — clarify panel auto-opens after batch.submit status transition', async () => {
+    server = new Server(TEST_URL);
+    await startReady();
+    // submitBatch flips status to clarifying via queue panel, but we trigger
+    // directly via setStatus simulated below: drive through the public
+    // handle by broadcasting a `task.status` is NOT the expected path; the
+    // clarify panel auto-opens via BatchState subscription.
+    // The clarify panel is already subscribed; triggering setStatus indirectly
+    // by calling submitBatch through the queue button is easier here.
+    const root = document.getElementById('forjis-inspector-root');
+    const submitBtn = root?.shadowRoot?.querySelector(
+      '.queue-footer button',
+    ) as HTMLButtonElement | null;
+    expect(submitBtn).not.toBeNull();
+    submitBtn?.click();
+    await new Promise((r) => setTimeout(r, 20));
+    const panel = root?.shadowRoot?.querySelector(
+      '[data-forjis-clarify-panel]',
+    );
+    expect(panel?.getAttribute('data-open')).toBe('true');
   });
 });

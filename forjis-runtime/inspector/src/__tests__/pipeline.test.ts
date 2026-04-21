@@ -104,6 +104,38 @@ describe('buildPin', () => {
     expect(pin.target.source).toEqual({ file: 'src/App.tsx', line: 12, col: 4 });
   });
 
+  it('FR-011-024 — parentPinId threads through to the pin', async () => {
+    const target = makeTarget(null);
+    const pin = await buildPin(
+      target,
+      '',
+      [],
+      {
+        elementPng: makeStubPng(),
+        viewportPng: makeStubPng(),
+        computedStyles: {},
+      },
+      { parentPinId: 'p-2' },
+    );
+    expect(pin.parentPinId).toBe('p-2');
+  });
+
+  it('FR-011-024 — omitted parentPinId defaults to null', async () => {
+    const target = makeTarget(null);
+    const pin = await buildPin(
+      target,
+      '',
+      [],
+      {
+        elementPng: makeStubPng(),
+        viewportPng: makeStubPng(),
+        computedStyles: {},
+      },
+      { commentGroupId: 'g-1' },
+    );
+    expect(pin.parentPinId).toBeNull();
+  });
+
   it('tolerates empty annotations and empty computed styles', async () => {
     const target = makeTarget(null);
     const pin = await buildPin(target, '', [], {
