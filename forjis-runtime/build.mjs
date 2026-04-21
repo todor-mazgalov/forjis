@@ -14,7 +14,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -86,5 +86,10 @@ buildWorkspace('facilitator');
 console.log('[build] Step 5: Build cli...');
 cleanWorkspace('cli');
 buildWorkspace('cli');
+// tsc does not preserve the executable bit on output files. The cli
+// bin entry is invoked directly via the shell (through npm's symlink),
+// so it needs chmod +x — npm only sets this during `npm install`, never
+// during a local rebuild.
+chmodSync(resolve(rootDir, 'cli', 'dist', 'bin', 'forjis.js'), 0o755);
 
 console.log('[build] All packages built successfully.');
