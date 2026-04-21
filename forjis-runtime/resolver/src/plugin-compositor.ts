@@ -229,6 +229,7 @@ export function composeRuntime(
     tokenBudget: buildConfig.tokenBudget ?? null,
     resolvedConstraints,
     healthCheck: buildConfig.healthCheck ?? { interval: 300, maxRetries: 3 },
+    inspector: buildConfig.inspector,
   };
 }
 
