@@ -594,12 +594,14 @@ describe('NFR-004: Minimal third-party dependencies', () => {
     expect(webDeps['yaml']).toBeUndefined();
   });
 
-  it('facilitator has yaml as only non-workspace runtime dependency', async () => {
-    /** Verifies NFR-004: no other third-party runtime deps introduced */
+  it('facilitator has yaml and qrcode-terminal as the only non-workspace runtime dependencies', async () => {
+    /** Verifies NFR-004 + inspector-006 NFR: the dev command is allowed to
+     *  add `qrcode-terminal` for terminal QR rendering; no other 3rd-party
+     *  runtime dep is permitted. */
     const pkg = await readJson(join(runtimeRoot, 'facilitator', 'package.json'));
     const deps = (pkg['dependencies'] ?? {}) as Record<string, string>;
-    const thirdParty = Object.keys(deps).filter(d => !d.startsWith('@forjis/'));
-    expect(thirdParty).toEqual(['yaml']);
+    const thirdParty = Object.keys(deps).filter(d => !d.startsWith('@forjis/')).sort();
+    expect(thirdParty).toEqual(['qrcode-terminal', 'yaml']);
     const workspaceDeps = Object.keys(deps).filter(d => d.startsWith('@forjis/')).sort();
     expect(workspaceDeps).toEqual(['@forjis/orchestrator', '@forjis/resolver', '@forjis/shared']);
   });

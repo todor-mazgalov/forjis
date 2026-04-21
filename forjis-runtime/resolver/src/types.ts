@@ -30,6 +30,8 @@ export interface BuildConfig {
   healthCheck: HealthCheckConfig | null;
   /** Optional inspector configuration. Null when not present. */
   inspector: InspectorConfig | null;
+  /** Optional dev configuration for `forjis dev`. Null when not present. */
+  dev: DevConfig | null;
 }
 
 /** A reference to a plugin by name. */
@@ -167,6 +169,38 @@ export interface InspectorConfig {
   clarifier?: string;
 }
 
+/**
+ * Configuration for the optional top-level `dev` block in build.forjis.
+ *
+ * Consumed by the `forjis dev` command to configure the user's dev-server
+ * subprocess and the listen address/port of the inspector HTTP/WebSocket
+ * server. Every field except `command` is optional; the `forjis dev`
+ * command applies CLI overrides on top of these values and layers defaults
+ * underneath. Omitting the block is non-fatal and surfaces as `null` on
+ * both `BuildConfig.dev` and `RuntimeConfig.dev`.
+ */
+export interface DevConfig {
+  /**
+   * Shell command string used to spawn the user's dev server (e.g.
+   * "npm run dev"). Required when the block is present; must be a
+   * non-empty string.
+   */
+  command: string;
+  /**
+   * Optional working directory for the dev-server subprocess. May be an
+   * absolute path or a project-relative path; when omitted the command's
+   * working directory defaults to the project root at runtime.
+   */
+  cwd?: string;
+  /**
+   * Optional override for the HTTP / WebSocket listen port. Must be an
+   * integer in the range 1024–65535 when present.
+   */
+  port?: number;
+  /** Optional override for the bind host string. */
+  host?: string;
+}
+
 /** Final resolved constraints ready for serialization. */
 export interface ResolvedConstraints {
   /** All merged mandatory constraint text. */
@@ -292,6 +326,8 @@ export interface RuntimeConfig {
   healthCheck: HealthCheckConfig;
   /** Optional inspector configuration; null when the build file omits the block. */
   inspector: InspectorConfig | null;
+  /** Optional dev configuration propagated from `BuildConfig.dev`; null when omitted. */
+  dev: DevConfig | null;
 }
 
 /** A resolved organization in the runtime config. */

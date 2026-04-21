@@ -230,6 +230,7 @@ export function composeRuntime(
     resolvedConstraints,
     healthCheck: buildConfig.healthCheck ?? { interval: 300, maxRetries: 3 },
     inspector: buildConfig.inspector,
+    dev: buildConfig.dev,
   };
 }
 

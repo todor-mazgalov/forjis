@@ -258,6 +258,35 @@ describe('known command routing (non-regression)', () => {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // forjis dev help — documents every new flag (FR-007)
+  // -------------------------------------------------------------------------
+
+  describe('forjis dev help output', () => {
+    it('forjis --help mentions the dev command', () => {
+      const { stdout, status } = runCli(['--help']);
+      expect(status).toBe(0);
+      expect(stdout).toContain('dev');
+    });
+
+    it('forjis dev --help lists every supported flag', () => {
+      const { stdout, status } = runCli(['dev', '--help']);
+      expect(status).toBe(0);
+      expect(stdout).toContain('--port');
+      expect(stdout).toContain('--host');
+      expect(stdout).toContain('--dev-cmd');
+      expect(stdout).toContain('--dev-cwd');
+      expect(stdout).toContain('--tunnel');
+      expect(stdout).toContain('--help');
+    });
+
+    it('forjis dev --help shows the dev-specific banner', () => {
+      const { stdout } = runCli(['dev', '--help']);
+      expect(stdout).toContain('forjis dev');
+      expect(stdout).not.toContain('Framework commands');
+    });
+  });
+
   it('"version" command prints version info', () => {
     const { stdout, status } = runCli(['version']);
     expect(stdout).toContain('forjis versions:');

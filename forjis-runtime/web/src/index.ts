@@ -42,3 +42,12 @@ export type {
 
 export { createWebServer } from './server.js';
 export { createRouter } from './router.js';
+export {
+  createInspectorWebSocketServer,
+  attachInspectorUpgradeListener,
+  InspectorUpgradeListenerAlreadyAttachedError,
+} from './inspector-ws.js';
+export type {
+  CreateInspectorWebSocketServerOptions,
+  InspectorWebSocketServer,
+} from './inspector-ws.js';

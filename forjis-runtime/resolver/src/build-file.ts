@@ -16,6 +16,7 @@ import type {
   BuildConfig,
   BuildConstraintsConfig,
   ConstraintIncludeRef,
+  DevConfig,
   HealthCheckConfig,
   InspectorConfig,
   MetricDef,
@@ -85,6 +86,7 @@ export function parseBuildFile(content: string): BuildConfig {
   const personas = validatePersonas(raw['personas'], errors);
   const healthCheck = validateHealthCheck(raw['health_check'], errors);
   const inspector = validateInspector(raw['inspector'], errors);
+  const dev = validateDev(raw['dev'], errors);
 
   if (errors.length > 0) {
     throw new BuildFileValidationError(errors);
@@ -103,6 +105,7 @@ export function parseBuildFile(content: string): BuildConfig {
     personas,
     healthCheck,
     inspector,
+    dev,
   };
 }
 
@@ -1054,4 +1057,79 @@ function validateInspector(
   }
 
   return { clarifier: raw['clarifier'] };
+}
+
+/** Recognized keys within the dev block. */
+const DEV_KEYS = new Set(['command', 'cwd', 'port', 'host']);
+
+/** Minimum TCP port accepted for `dev.port`. */
+const DEV_PORT_MIN = 1024;
+
+/** Maximum TCP port accepted for `dev.port`. */
+const DEV_PORT_MAX = 65535;
+
+/**
+ * Validates the optional top-level `dev` block in the build file.
+ *
+ * Returns `null` when omitted. When present, requires a non-empty
+ * `command` string and accepts optional `cwd`, `port`, and `host` fields.
+ * Rejects unknown keys. Port must be an integer in the range
+ * {@link DEV_PORT_MIN}–{@link DEV_PORT_MAX}. Errors are appended to the
+ * shared aggregator so `parseBuildFile` surfaces every issue at once.
+ *
+ * @param dev - Raw value read from the YAML tree.
+ * @param errors - Mutable array the validator appends messages to.
+ * @returns The validated {@link DevConfig}, or `null` when the block is
+ *   omitted / invalid in a way that prevents partial construction.
+ */
+function validateDev(dev: unknown, errors: string[]): DevConfig | null {
+  if (dev === undefined || dev === null) return null;
+  if (typeof dev !== 'object' || Array.isArray(dev)) {
+    errors.push('"dev" must be an object');
+    return null;
+  }
+
+  const raw = dev as Record<string, unknown>;
+
+  for (const key of Object.keys(raw)) {
+    if (!DEV_KEYS.has(key)) {
+      errors.push(`dev: unrecognized key "${key}"`);
+    }
+  }
+
+  if (typeof raw['command'] !== 'string' || raw['command'].length === 0) {
+    errors.push('dev.command: required non-empty string');
+    return null;
+  }
+
+  const config: DevConfig = { command: raw['command'] };
+
+  if (raw['cwd'] !== undefined) {
+    if (typeof raw['cwd'] !== 'string') {
+      errors.push('dev.cwd: must be a string');
+    } else {
+      config.cwd = raw['cwd'];
+    }
+  }
+
+  if (raw['port'] !== undefined) {
+    const val = Number(raw['port']);
+    if (!Number.isInteger(val) || val < DEV_PORT_MIN || val > DEV_PORT_MAX) {
+      errors.push(
+        `dev.port: must be an integer between ${DEV_PORT_MIN} and ${DEV_PORT_MAX}`
+      );
+    } else {
+      config.port = val;
+    }
+  }
+
+  if (raw['host'] !== undefined) {
+    if (typeof raw['host'] !== 'string') {
+      errors.push('dev.host: must be a string');
+    } else {
+      config.host = raw['host'];
+    }
+  }
+
+  return config;
 }
