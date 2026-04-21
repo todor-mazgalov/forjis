@@ -58,6 +58,37 @@ export async function atomicWriteFile(filePath: string, content: string): Promis
 }
 
 /**
+ * Atomically writes a binary buffer to a file using a temp-file-then-rename strategy.
+ *
+ * Mirrors the semantics of {@link atomicWriteFile} for `Buffer` payloads that
+ * are not valid UTF-8 text (PNGs, base64-decoded opaque blobs, etc.). Writes
+ * to a temporary file first, then renames it to the target path so the target
+ * file is never observed in a partially-written state. Cleans up the temp
+ * file on failure.
+ *
+ * @param filePath - The absolute path to the target file.
+ * @param data - The binary buffer to write.
+ * @throws {CliError} On filesystem failures after cleanup.
+ */
+export async function atomicWriteFileBinary(filePath: string, data: Buffer): Promise<void> {
+  const tmpPath = `${filePath}.tmp.${randomBytes(4).toString('hex')}`;
+
+  try {
+    await writeFile(tmpPath, data);
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    try {
+      await unlink(tmpPath);
+    } catch {
+      /* Temp file may not exist if writeFile failed; ignore cleanup error */
+    }
+    throw new CliError(
+      `Failed to write "${filePath}": ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+/**
  * Reads and parses a YAML file from disk.
  *
  * Returns null if the file does not exist, allowing callers to
