@@ -16,6 +16,7 @@
 
 import type { InspectorMessage } from '@forjis/shared';
 import { InspectorClient } from './transport.js';
+import { initOverlay, type OverlayHandle } from './ui/overlay.js';
 
 /** `id` of the root placeholder element appended to `document.body`. */
 const ROOT_ELEMENT_ID = 'forjis-inspector-root';
@@ -139,7 +140,13 @@ export function mount(options?: InspectorMountOptions): InspectorMountHandle {
   root.id = ROOT_ELEMENT_ID;
   document.body.appendChild(root);
   const client = new InspectorClient({ url, token });
-  const handle = buildHandle(client, root);
+  const overlay = initOverlay({
+    root,
+    onPick: () => {
+      /* task-010: enqueue pin */
+    },
+  });
+  const handle = buildHandle(client, root, overlay);
   currentHandle = handle;
   return handle;
 }
@@ -148,15 +155,19 @@ export function mount(options?: InspectorMountOptions): InspectorMountHandle {
  * Build the {@link InspectorMountHandle} returned by {@link mount}.
  *
  * Extracted to keep `mount()` under the 40-line guideline and to isolate the
- * teardown closure that clears the module-local `currentHandle`.
+ * teardown closure that clears the module-local `currentHandle`. Unmount
+ * order: overlay teardown → transport close → DOM removal.
  *
  * @param client - The freshly-constructed transport client.
  * @param root - The root DOM element to remove on unmount.
- * @returns A mount handle wired to {@link client} and {@link root}.
+ * @param overlay - The overlay handle whose `destroy()` runs first.
+ * @returns A mount handle wired to {@link client}, {@link root}, and
+ *   {@link overlay}.
  */
 function buildHandle(
   client: InspectorClient,
   root: HTMLDivElement,
+  overlay: OverlayHandle,
 ): InspectorMountHandle {
   const handle: InspectorMountHandle = {
     ready: client.ready,
@@ -166,6 +177,7 @@ function buildHandle(
         return;
       }
       currentHandle = null;
+      overlay.destroy();
       client.close();
       if (root.parentNode) {
         root.parentNode.removeChild(root);
