@@ -14,7 +14,8 @@
     "resolver",
     "web",
     "orchestrator",
-    "inspector"
+    "inspector",
+    "vite-plugin-inspector"
   ],
   "scripts": {
     "build": "node build.mjs",
