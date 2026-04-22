@@ -449,7 +449,7 @@ describe('mount() task-011 clarify + history + reply wiring', () => {
     return { parentPinId: parentPin.id, parentBatchId: parentBatch.id };
   }
 
-  it('FR-011-031 — sidebar reply opens the sheet; Send dispatches pin.create + batch.submit in order with parentPinId', async () => {
+  it('FR-011-031 — sidebar reply opens the sheet; Send dispatches a single reply.create frame with parentPinId', async () => {
     server = new Server(TEST_URL);
     const outbound: Array<{ type: string; payload: unknown }> = [];
     server.on('connection', (socket) => {
@@ -513,34 +513,130 @@ describe('mount() task-011 clarify + history + reply wiring', () => {
     sendBtn?.click();
     // Allow buildPin + fetch microtasks to settle.
     await new Promise((r) => setTimeout(r, 50));
-    // Expect pin.create then batch.submit, both for the same new UUID, with
-    // parentPinId set.
-    const kinds = outbound.map((o) => o.type);
-    const createIdx = kinds.indexOf('pin.create');
-    const submitIdx = kinds.indexOf('batch.submit');
-    expect(createIdx).toBeGreaterThanOrEqual(0);
-    expect(submitIdx).toBeGreaterThan(createIdx);
-    const createMsg = outbound[createIdx].payload as {
-      batchId: string;
+    // Expect exactly one outbound `reply.create` frame. The facilitator's
+    // `replyToPin` handler owns child-batch allocation, so the inspector no
+    // longer sends `pin.create` + `batch.submit` for replies (inspector-013).
+    const replyIdx = outbound.findIndex((o) => o.type === 'reply.create');
+    expect(replyIdx).toBeGreaterThanOrEqual(0);
+    expect(outbound.some((o) => o.type === 'pin.create')).toBe(false);
+    expect(outbound.some((o) => o.type === 'batch.submit')).toBe(false);
+    const replyMsg = outbound[replyIdx].payload as {
+      parentPinId: string;
       pin: Pin;
+      comment: string;
+      failureSummary?: string;
+      failedTaskPath?: string;
     };
-    const submitMsg = outbound[submitIdx].payload as { batchId: string };
-    expect(createMsg.batchId).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    expect(replyMsg.parentPinId).toBe(parentPinId);
+    expect(replyMsg.pin.parentPinId).toBe(parentPinId);
+    expect(replyMsg.pin.comment).toBe('still broken');
+    expect(replyMsg.comment).toBe('still broken');
+    // Ordinary (non-failure) reply: the optional failure fields MUST be
+    // omitted from the wire frame.
+    expect(replyMsg.failureSummary).toBeUndefined();
+    expect(replyMsg.failedTaskPath).toBeUndefined();
+  });
+
+  it('FR-013 — failure-mode reply submission emits a reply.create frame carrying failureSummary + failedTaskPath', async () => {
+    server = new Server(TEST_URL);
+    const outbound: Array<{ type: string; payload: unknown }> = [];
+    server.on('connection', (socket) => {
+      socket.send(
+        JSON.stringify({
+          type: 'session.ack',
+          sessionId: 's',
+          protocolVersion: 'forjis-inspector/1.0',
+        }),
+      );
+      (
+        socket as unknown as {
+          on: (ev: string, h: (raw: string) => void) => void;
+        }
+      ).on('message', (raw: string) => {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.type === 'session.join') {
+            return;
+          }
+          outbound.push({ type: parsed.type, payload: parsed });
+        } catch {
+          /* ignore */
+        }
+      });
+    });
+    // Seed the history store with a FAILED parent batch so the sidebar
+    // renders the failure section with "Reply with hint".
+    const parentPin = makePin('p-failed-parent');
+    const parentBatch: Batch = {
+      id: 'b-failed-parent-1',
+      platform: 'web',
+      screens: ['/a'],
+      pins: [parentPin],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      parentBatchId: null,
+      status: 'failed',
+    };
+    const seeded = {
+      token: TEST_TOKEN,
+      entries: [
+        {
+          batch: parentBatch,
+          taskPath: '.forjis/tasks/inspector-xyz',
+          summary: 'Build failed in components/Card.tsx',
+          finalizedAt: '2026-04-22T10:00:00.000Z',
+        },
+      ],
+    };
+    localStorage.setItem(
+      'forjis-inspector:history',
+      JSON.stringify(seeded),
     );
-    expect(submitMsg.batchId).toBe(createMsg.batchId);
-    expect(createMsg.pin.parentPinId).toBe(parentPinId);
-    expect(createMsg.pin.comment).toBe('still broken');
-    // FR-011-023 / TASK.md acceptance #8 — the reply batch is a new batch,
-    // distinct from the parent batch. The wire frame for `batch.submit`
-    // carries only `batchId`, so parent linkage is observable here by
-    // asserting the new batchId differs from the seeded parent. The
-    // `parentBatchId` value itself is threaded from the reply-sheet's
-    // context (covered by `reply-sheet.test.ts`) into the new Batch
-    // constructed in `mount.ts:dispatchReplyBatch` (covered by source
-    // inspection per review.md §3 / §5.3).
-    expect(createMsg.batchId).not.toBe(parentBatchId);
-    expect(submitMsg.batchId).not.toBe(parentBatchId);
+
+    const handle = mount({ url: TEST_URL, token: TEST_TOKEN });
+    await handle.ready;
+    const root = document.getElementById('forjis-inspector-root');
+    const shadow = root?.shadowRoot;
+    expect(shadow).not.toBeNull();
+    // Click the failure-card "Reply with hint" button.
+    const failureReplyBtn = shadow?.querySelector(
+      '.sidebar-failure-reply',
+    ) as HTMLButtonElement | null;
+    expect(failureReplyBtn).not.toBeNull();
+    failureReplyBtn?.click();
+    // Reply sheet should be open and the failure metadata visible.
+    const replySheet = shadow?.querySelector(
+      '[data-forjis-reply-sheet]',
+    ) as HTMLElement | null;
+    expect(replySheet?.getAttribute('data-open')).toBe('true');
+    const textarea = shadow?.querySelector(
+      '.reply-comment',
+    ) as HTMLTextAreaElement | null;
+    expect(textarea).not.toBeNull();
+    if (textarea) {
+      textarea.value = 'please add the missing import';
+    }
+    const sendBtn = shadow?.querySelector(
+      '.reply-send-btn',
+    ) as HTMLButtonElement | null;
+    sendBtn?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    const replyMsg = outbound.find((o) => o.type === 'reply.create')
+      ?.payload as
+      | {
+          parentPinId: string;
+          pin: Pin;
+          comment: string;
+          failureSummary?: string;
+          failedTaskPath?: string;
+        }
+      | undefined;
+    expect(replyMsg).toBeDefined();
+    expect(replyMsg?.parentPinId).toBe(parentPin.id);
+    expect(replyMsg?.comment).toBe('please add the missing import');
+    expect(replyMsg?.failureSummary).toBe(
+      'Build failed in components/Card.tsx',
+    );
+    expect(replyMsg?.failedTaskPath).toBe('.forjis/tasks/inspector-xyz');
   });
 
   it('FR-011-030 — clarify panel auto-opens after batch.submit status transition', async () => {

@@ -138,6 +138,35 @@ function toProjectRelativeForwardSlash(projectDir: string, absolutePath: string)
 }
 
 /**
+ * Discriminator used by {@link BatchFailedEventPayload} to disambiguate the
+ * three facilitator-side failure sources in `forjis-runtime/facilitator/src/commands/run.ts`.
+ *
+ * - `'engine-error'`     — catch-all for any throw inside the run-loop body (engine rejection,
+ *                          outcome-assessor rejection, user `batch.abort` during a post-finalize run).
+ * - `'no-pipeline-state'` — orchestrator returned `exit 0` without writing `pipeline-state.yaml`.
+ * - `'shutdown'`          — SIGINT/SIGTERM cleanup transitioned a running task to `failed`.
+ */
+export type FailureCategory = 'engine-error' | 'no-pipeline-state' | 'shutdown';
+
+/**
+ * Payload delivered with the in-process `batch.failed` event.
+ *
+ * The `batchId` and `taskId` fields are the same value for v1 (inspector tasks
+ * are named after the batch-derived slug), but both are kept in the contract so
+ * downstream subscribers have clear semantic handles.
+ */
+export interface BatchFailedEventPayload {
+  /** Identifier of the batch whose downstream task failed. */
+  batchId: string;
+  /** Task identifier (starts with the literal prefix `inspector-`). */
+  taskId: string;
+  /** Absolute path to `.forjis/tasks/<taskId>`. */
+  taskPath: string;
+  /** Failure category recorded at the originating call site. */
+  category: FailureCategory;
+}
+
+/**
  * Facilitator implementation of {@link InspectorService}.
  *
  * Extends {@link EventEmitter} directly so consumers can use standard
@@ -150,6 +179,7 @@ function toProjectRelativeForwardSlash(projectDir: string, absolutePath: string)
  * | `clarify.answer`  | `{ batchId: string; answer: ClarifyAnswer }`                |
  * | `pin.added`       | `{ batchId: string; pin: Pin }` (post-rewrite stored pin)   |
  * | `task.status`     | `{ batchId: string; status: BatchStatus; summary?: string }` |
+ * | `batch.failed`    | {@link BatchFailedEventPayload}                             |
  *
  * Every batch is kept in-memory only; nothing is persisted across restarts.
  */
@@ -317,6 +347,22 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
   }
 
   /**
+   * Notify in-process subscribers that an inspector-sourced task has
+   * transitioned to `failed`.
+   *
+   * Fire-and-forget: emits the {@link BatchFailedEventPayload} on the
+   * internal emitter and does not mutate any registry state. Callers
+   * (currently only the facilitator's run-loop failure dispatcher)
+   * MUST gate emission on `taskId.startsWith('inspector-')` so
+   * non-inspector task failures stay on the run-loop's original path.
+   *
+   * @param payload - Typed failure-event payload.
+   */
+  emitBatchFailed(payload: BatchFailedEventPayload): void {
+    this.emit('batch.failed', payload);
+  }
+
+  /**
    * Create a follow-up pin that replies to an existing pin.
    *
    * Resolves the parent pin's owning batch via the pin-id reverse index,
@@ -325,12 +371,28 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
    * the reply pin through the same capture-rewrite path as {@link addPin}
    * (with `parentPinId` and `comment` attached to the stored pin).
    *
+   * When the inbound `reply.create` frame carries `failureSummary` and/or
+   * `failedTaskPath` (inspector-013), those fields are forwarded into
+   * `parent.json` so {@link InspectorClarifierRunner.loadParentContext}
+   * can hand them to the clarifier persona via `modeArgs.parentContext`.
+   *
    * @param parentPinId - Identifier of the pin being replied to.
    * @param pin - New pin carrying the reply. `capture.*` fields MUST be base64.
    * @param comment - Comment text attached to the reply pin.
+   * @param failureSummary - Summary of the failed parent task, or
+   *   `null` / `undefined` when the reply is not failure-scoped.
+   * @param failedTaskPath - Project-relative path of the failed parent
+   *   task directory, or `null` / `undefined` when the reply is not
+   *   failure-scoped.
    * @throws When the parent pin or its owning batch cannot be resolved.
    */
-  async replyToPin(parentPinId: string, pin: Pin, comment: string): Promise<void> {
+  async replyToPin(
+    parentPinId: string,
+    pin: Pin,
+    comment: string,
+    failureSummary?: string | null,
+    failedTaskPath?: string | null,
+  ): Promise<void> {
     const parentBatchId = this.pinIndex.get(parentPinId);
     if (parentBatchId === undefined) {
       throw new Error(`Unknown parent pin id "${parentPinId}".`);
@@ -351,7 +413,13 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
     }
 
     const childBatch = await this.createChildBatch(parentBatch);
-    await this.writeParentJson(childBatch.id, parentPin, parentBatch.id);
+    await this.writeParentJson(
+      childBatch.id,
+      parentPin,
+      parentBatch.id,
+      failureSummary ?? null,
+      failedTaskPath ?? null,
+    );
 
     const replyPin: Pin = {
       ...pin,
@@ -485,15 +553,28 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
    * writes `tasks/inspector-...` directories, the reply's parent.json can
    * record that path). In v1 it is always `null`.
    *
+   * When the reply originated from a failure card (inspector-013), the
+   * optional `failureSummary` / `failedTaskPath` arguments are persisted
+   * alongside the other parent-linkage fields so the clarifier runner's
+   * {@link InspectorClarifierRunner.loadParentContext} step can forward
+   * them verbatim into `modeArgs.parentContext`. When `null`, the fields
+   * are still emitted (as `null`) to keep the on-disk schema stable.
+   *
    * @param childBatchId - Identifier of the child batch whose directory
    *   receives the file.
    * @param parentPin - Snapshot of the parent pin.
    * @param parentBatchId - Identifier of the parent batch.
+   * @param failureSummary - Summary of the failed parent task, or `null`
+   *   when the reply is not failure-scoped.
+   * @param failedTaskPath - Project-relative path of the failed parent
+   *   task directory, or `null` when the reply is not failure-scoped.
    */
   private async writeParentJson(
     childBatchId: string,
     parentPin: Pin,
     parentBatchId: string,
+    failureSummary: string | null = null,
+    failedTaskPath: string | null = null,
   ): Promise<void> {
     const parentJsonPath = join(this.stagingRoot, childBatchId, 'parent.json');
     const payload = {
@@ -501,6 +582,8 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
       parentBatchId,
       parentTaskPath: null,
       childBatchId,
+      failureSummary,
+      failedTaskPath,
     };
     await atomicWriteFile(parentJsonPath, `${JSON.stringify(payload, null, 2)}\n`);
   }

@@ -1,5 +1,5 @@
 /**
- * Reply-sheet factory (design.md §D-005, FR-011-022).
+ * Reply-sheet factory (design.md §D-005, FR-011-022; inspector-013 §D9).
  *
  * Mirrors the comment sheet's shadow-rooted layout (desktop right drawer,
  * mobile bottom sheet) minus the "Add another pin" control. Adds a
@@ -7,8 +7,17 @@
  * batch's short id, (b) the parent pin's element-screenshot thumbnail,
  * (c) the parent pin's comment, and (d) the agent diff summary (or the
  * placeholder `"Agent diff summary unavailable"`). Send dispatches
- * `onSubmitReply({ parentPinId, parentBatchId, parentTaskPath, comment })`
- * when the comment is non-empty.
+ * `onSubmitReply({ parentPinId, parentBatchId, parentTaskPath, comment,
+ * failureSummary?, failedTaskPath? })` when the comment is non-empty.
+ *
+ * The sheet supports two modes:
+ *   - `normal` (default): replies to a successful batch, preserving the
+ *     existing flow.
+ *   - `failure`: replies to a batch whose agent run failed. Shows the
+ *     failure summary prominently, pre-populates the textarea with a
+ *     framing prompt (*"The agent said: `<summary>`. Your hint:"*), and
+ *     surfaces `failureSummary` + `failedTaskPath` on the submit payload
+ *     so the caller can forward them into the clarifier's `parentContext`.
  *
  * Module boundaries (NFR-011-002): imports only `@forjis/shared` types.
  * `mount.ts` owns `buildPin` invocation and the subsequent `pin.create +
@@ -16,6 +25,19 @@
  */
 
 import type { Batch, Pin } from '@forjis/shared';
+
+/**
+ * Optional failure metadata attached to a {@link ReplySheetContext} when
+ * the sheet is opened in `failure` mode. Produced by the sidebar's
+ * failure-card action; forwarded unchanged to `onSubmitReply` so the
+ * parent-context payload can carry it to the clarifier.
+ */
+export interface ReplyFailureContext {
+  /** LLM-generated ≤160-char summary delivered by `task.status { failed }`. */
+  readonly failureSummary: string;
+  /** Task directory path of the failed run (`.forjis/tasks/<taskId>`). */
+  readonly failedTaskPath: string;
+}
 
 /** Parent context supplied to {@link ReplySheetHandle.open}. */
 export interface ReplySheetContext {
@@ -27,6 +49,11 @@ export interface ReplySheetContext {
   readonly taskPath: string;
   /** Agent diff summary when available, else `null`. */
   readonly summary: string | null;
+  /**
+   * Failure metadata, present only when the sheet is opened from a
+   * failure card (inspector-013). Omit / set to `null` for normal replies.
+   */
+  readonly failure?: ReplyFailureContext | null;
 }
 
 /** Payload passed to `onSubmitReply`. */
@@ -39,6 +66,16 @@ export interface ReplySubmitPayload {
   readonly parentTaskPath: string;
   /** Trimmed user comment from the textarea. */
   readonly comment: string;
+  /**
+   * Failure summary from the parent batch's `task.status { failed }`
+   * frame when the sheet was opened in failure mode; `null` otherwise.
+   */
+  readonly failureSummary: string | null;
+  /**
+   * Failed task directory path when the sheet was opened in failure
+   * mode; `null` otherwise.
+   */
+  readonly failedTaskPath: string | null;
 }
 
 /** Init options accepted by {@link createReplySheet}. */
@@ -111,6 +148,22 @@ div[data-forjis-reply-sheet][data-open="false"] { display: none; }
 }
 .reply-parent-comment { font-size: 13px; color: #111827; }
 .reply-summary { font-size: 12px; color: #4b5563; font-style: italic; }
+.reply-failure {
+  padding: 8px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.reply-failure[data-hidden="true"] { display: none; }
+.reply-failure-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: #7f1d1d;
+}
 .reply-comment {
   width: 100%;
   resize: vertical;
@@ -173,6 +226,8 @@ interface SheetDom {
   thumbnail: HTMLImageElement;
   parentComment: HTMLDivElement;
   summary: HTMLDivElement;
+  failureBox: HTMLDivElement;
+  failureText: HTMLSpanElement;
   textarea: HTMLTextAreaElement;
   sendBtn: HTMLButtonElement;
   cancelBtn: HTMLButtonElement;
@@ -209,6 +264,18 @@ function buildSheetDom(): SheetDom {
   summary.className = 'reply-summary';
   context.appendChild(summary);
   panel.appendChild(context);
+  const failureBox = document.createElement('div');
+  failureBox.className = 'reply-failure';
+  failureBox.setAttribute('data-forjis-reply-failure', 'true');
+  failureBox.setAttribute('data-hidden', 'true');
+  const failureLabel = document.createElement('span');
+  failureLabel.className = 'reply-failure-label';
+  failureLabel.textContent = 'Agent reported a failure';
+  failureBox.appendChild(failureLabel);
+  const failureText = document.createElement('span');
+  failureText.className = 'reply-failure-text';
+  failureBox.appendChild(failureText);
+  panel.appendChild(failureBox);
   const textarea = document.createElement('textarea');
   textarea.className = 'reply-comment';
   textarea.rows = 4;
@@ -235,10 +302,41 @@ function buildSheetDom(): SheetDom {
     thumbnail,
     parentComment,
     summary,
+    failureBox,
+    failureText,
     textarea,
     sendBtn,
     cancelBtn,
   };
+}
+
+/**
+ * Resolve the failure context from an opened {@link ReplySheetContext}.
+ *
+ * Returns the failure metadata when present and well-formed, else `null`.
+ * Kept as a narrow helper so call sites stay branch-free.
+ *
+ * @param ctx - Parent context passed to `open`.
+ * @returns Failure metadata or `null` for normal replies.
+ */
+function resolveFailure(ctx: ReplySheetContext): ReplyFailureContext | null {
+  if (!ctx.failure) {
+    return null;
+  }
+  return ctx.failure;
+}
+
+/**
+ * Build the framing prompt pre-populated into the textarea when the sheet
+ * opens in failure mode. Mirrors the phrasing required by the inspector-013
+ * task acceptance (*"The agent said: `<summary>`. Your hint:"*).
+ *
+ * @param summary - Failure summary from `task.status.summary`.
+ * @returns A single-line prompt ending in a trailing space so the cursor
+ *          lands where the user types.
+ */
+function buildFailureFraming(summary: string): string {
+  return 'The agent said: ' + summary + '. Your hint: ';
 }
 
 /** Render the parent-context header against `ctx`. */
@@ -248,6 +346,14 @@ function renderContext(dom: SheetDom, ctx: ReplySheetContext): void {
   dom.thumbnail.src = ctx.pin.capture.elementScreenshot;
   dom.parentComment.textContent = ctx.pin.comment;
   dom.summary.textContent = ctx.summary ?? SUMMARY_PLACEHOLDER;
+  const failure = resolveFailure(ctx);
+  if (failure) {
+    dom.failureBox.setAttribute('data-hidden', 'false');
+    dom.failureText.textContent = failure.failureSummary;
+  } else {
+    dom.failureBox.setAttribute('data-hidden', 'true');
+    dom.failureText.textContent = '';
+  }
 }
 
 /**
@@ -284,11 +390,14 @@ export function createReplySheet(
     if (trimmed.length === 0) {
       return;
     }
+    const failure = resolveFailure(activeContext);
     opts.onSubmitReply({
       parentPinId: activeContext.pin.id,
       parentBatchId: activeContext.batch.id,
       parentTaskPath: activeContext.taskPath,
       comment: trimmed,
+      failureSummary: failure ? failure.failureSummary : null,
+      failedTaskPath: failure ? failure.failedTaskPath : null,
     });
     close();
   };
@@ -305,7 +414,10 @@ export function createReplySheet(
       }
       activeContext = context;
       renderContext(dom, context);
-      dom.textarea.value = '';
+      const failure = resolveFailure(context);
+      dom.textarea.value = failure
+        ? buildFailureFraming(failure.failureSummary)
+        : '';
       dom.root.setAttribute('data-open', 'true');
     },
     close,

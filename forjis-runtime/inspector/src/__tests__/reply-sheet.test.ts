@@ -142,6 +142,8 @@ describe('reply-sheet', () => {
         parentBatchId: 'b1234567-abcd-4abc-8def-0123456789ab',
         parentTaskPath: '/tmp/t',
         comment: 'still broken',
+        failureSummary: null,
+        failedTaskPath: null,
       },
     ]);
   });
@@ -238,6 +240,95 @@ describe('reply-sheet', () => {
     const re =
       /\.reply-send-btn[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s;
     expect(re.test(css)).toBe(true);
+  });
+
+  it('FR-013-F-001 — failure mode reveals the failure summary and pre-populates framing', () => {
+    const { shadow } = attachShadow();
+    const handle = createReplySheet({
+      shadow,
+      onSubmitReply: () => undefined,
+      onCancel: () => undefined,
+    });
+    handle.open({
+      ...makeContext('diff summary'),
+      failure: {
+        failureSummary: 'Button.tsx missing',
+        failedTaskPath: '.forjis/tasks/inspector-xyz',
+      },
+    });
+    const root = shadow.querySelector(
+      '[data-forjis-reply-sheet]',
+    ) as HTMLElement;
+    const failureBox = root.querySelector(
+      '[data-forjis-reply-failure]',
+    ) as HTMLElement;
+    expect(failureBox).not.toBeNull();
+    expect(failureBox.getAttribute('data-hidden')).toBe('false');
+    expect(failureBox.textContent).toContain('Button.tsx missing');
+    const textarea = root.querySelector(
+      '.reply-comment',
+    ) as HTMLTextAreaElement;
+    expect(textarea.value).toBe(
+      'The agent said: Button.tsx missing. Your hint: ',
+    );
+  });
+
+  it('FR-013-F-001 — normal mode keeps the failure box hidden and textarea empty', () => {
+    const { shadow } = attachShadow();
+    const handle = createReplySheet({
+      shadow,
+      onSubmitReply: () => undefined,
+      onCancel: () => undefined,
+    });
+    handle.open(makeContext('diff summary'));
+    const root = shadow.querySelector(
+      '[data-forjis-reply-sheet]',
+    ) as HTMLElement;
+    const failureBox = root.querySelector(
+      '[data-forjis-reply-failure]',
+    ) as HTMLElement;
+    expect(failureBox.getAttribute('data-hidden')).toBe('true');
+    const textarea = root.querySelector(
+      '.reply-comment',
+    ) as HTMLTextAreaElement;
+    expect(textarea.value).toBe('');
+  });
+
+  it('FR-013-F-001 — failure-mode Send forwards failureSummary and failedTaskPath', () => {
+    const { shadow } = attachShadow();
+    const captured: unknown[] = [];
+    const handle = createReplySheet({
+      shadow,
+      onSubmitReply: (p) => captured.push(p),
+      onCancel: () => undefined,
+    });
+    handle.open({
+      ...makeContext(null),
+      failure: {
+        failureSummary: 'Build failed in components/Card.tsx',
+        failedTaskPath: '.forjis/tasks/inspector-abc',
+      },
+    });
+    const root = shadow.querySelector(
+      '[data-forjis-reply-sheet]',
+    ) as HTMLElement;
+    const textarea = root.querySelector(
+      '.reply-comment',
+    ) as HTMLTextAreaElement;
+    textarea.value = textarea.value + 'rename the component';
+    const sendBtn = root.querySelector('.reply-send-btn') as HTMLButtonElement;
+    sendBtn.click();
+    expect(captured).toEqual([
+      {
+        parentPinId: 'p-2',
+        parentBatchId: 'b1234567-abcd-4abc-8def-0123456789ab',
+        parentTaskPath: '/tmp/t',
+        comment:
+          'The agent said: Build failed in components/Card.tsx. Your hint: rename the component',
+        failureSummary: 'Build failed in components/Card.tsx',
+        failedTaskPath: '.forjis/tasks/inspector-abc',
+      },
+    ]);
   });
 
   it('NFR-011-002 — source contains no transport / mount / WebSocket imports', () => {

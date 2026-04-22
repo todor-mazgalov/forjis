@@ -259,7 +259,28 @@ export type InspectorMessage =
   | { type: 'clarify.answer'; batchId: string; answer: ClarifyAnswer }
   | { type: 'batch.finalize'; batchId: string; taskPath: string }
   | { type: 'task.status'; batchId: string; status: BatchStatus; summary?: string }
-  | { type: 'reply.create'; parentPinId: string; pin: Pin; comment: string }
+  | {
+      type: 'reply.create';
+      parentPinId: string;
+      pin: Pin;
+      comment: string;
+      /**
+       * Summary of the failed parent task, forwarded verbatim into the child
+       * batch's `parent.json` so the clarifier persona can cite the original
+       * failure reason when drafting a follow-up task. Populated only when
+       * the reply originated from a failure card (inspector-013); omitted
+       * for ordinary replies.
+       */
+      failureSummary?: string;
+      /**
+       * Project-relative path of the failed parent task directory, forwarded
+       * verbatim into the child batch's `parent.json` so the clarifier
+       * persona can link to the upstream `events.jsonl` / `TASK.md` for
+       * context. Populated only when the reply originated from a failure
+       * card (inspector-013); omitted for ordinary replies.
+       */
+      failedTaskPath?: string;
+    }
   | { type: 'batch.abort'; batchId: string };
 
 /**

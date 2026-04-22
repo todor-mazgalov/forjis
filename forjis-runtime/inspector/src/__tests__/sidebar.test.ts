@@ -239,6 +239,129 @@ describe('sidebar', () => {
     expect(observed).toEqual(['new diff']);
   });
 
+  it('FR-013-F-001 — failed batch renders summary text under thumbnails', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    pushBatch(makeBatch('b-fail', 2, 'failed'), '/tmp/f');
+    updateSummary('b-fail', 'Agent could not find Button.tsx');
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const card = root.querySelector(
+      '.sidebar-batch-card[data-batch-id="b-fail"]',
+    ) as HTMLElement;
+    const dot = card.querySelector('.sidebar-status-dot');
+    expect(dot?.getAttribute('data-status')).toBe('failed');
+    const summaryEl = card.querySelector(
+      '[data-forjis-failure-summary]',
+    ) as HTMLElement;
+    expect(summaryEl).not.toBeNull();
+    expect(summaryEl.textContent).toBe('Agent could not find Button.tsx');
+  });
+
+  it('FR-013-F-001 — non-failed batch has no failure card', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    pushBatch(makeBatch('b-done', 1, 'done'), '/tmp/d');
+    updateSummary('b-done', 'A normal diff');
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const card = root.querySelector(
+      '.sidebar-batch-card[data-batch-id="b-done"]',
+    ) as HTMLElement;
+    expect(card.querySelector('[data-forjis-failure-card]')).toBeNull();
+  });
+
+  it('FR-013-F-001 — Reply with hint invokes onReply in failure mode', () => {
+    const { shadow } = attachShadow();
+    const observed: unknown[] = [];
+    createSidebar({
+      shadow,
+      onReply: (ctx) => observed.push(ctx),
+    });
+    pushBatch(makeBatch('b-fail', 2, 'failed'), '/tmp/fpath');
+    updateSummary('b-fail', 'Engine exited 1');
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const replyBtn = root.querySelector(
+      '[data-forjis-failure-reply]',
+    ) as HTMLButtonElement;
+    expect(replyBtn).not.toBeNull();
+    replyBtn.click();
+    expect(observed).toHaveLength(1);
+    const ctx = observed[0] as {
+      mode: string;
+      failureSummary: string | null;
+      failedTaskPath: string | null;
+      batch: { id: string };
+    };
+    expect(ctx.mode).toBe('failure');
+    expect(ctx.failureSummary).toBe('Engine exited 1');
+    expect(ctx.failedTaskPath).toBe('/tmp/fpath');
+    expect(ctx.batch.id).toBe('b-fail');
+  });
+
+  it('FR-013-F-001 — View log anchor has href derived from taskPath basename', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    pushBatch(
+      makeBatch('b-fail', 1, 'failed'),
+      '/workspace/.forjis/tasks/inspector-abc',
+    );
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const logLink = root.querySelector(
+      '[data-forjis-failure-log]',
+    ) as HTMLAnchorElement;
+    expect(logLink).not.toBeNull();
+    expect(logLink.getAttribute('href')).toBe(
+      '/tasks/inspector-abc/events',
+    );
+    expect(logLink.getAttribute('target')).toBe('_blank');
+    expect(logLink.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('FR-013-F-001 — View log click fires onViewLog with batch + taskPath', () => {
+    const { shadow } = attachShadow();
+    const observed: unknown[] = [];
+    createSidebar({
+      shadow,
+      onReply: () => undefined,
+      onViewLog: (ctx) => observed.push(ctx),
+    });
+    pushBatch(makeBatch('b-fail', 1, 'failed'), '/tmp/t');
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const logLink = root.querySelector(
+      '[data-forjis-failure-log]',
+    ) as HTMLAnchorElement;
+    // Prevent jsdom from actually navigating.
+    logLink.addEventListener('click', (e) => e.preventDefault());
+    logLink.click();
+    expect(observed).toHaveLength(1);
+    const ctx = observed[0] as { batch: { id: string }; taskPath: string };
+    expect(ctx.batch.id).toBe('b-fail');
+    expect(ctx.taskPath).toBe('/tmp/t');
+  });
+
+  it('FR-013-F-001 — normal per-pin Reply still passes mode === "normal"', () => {
+    const { shadow } = attachShadow();
+    const observed: unknown[] = [];
+    createSidebar({ shadow, onReply: (ctx) => observed.push(ctx) });
+    pushBatch(makeBatch('b-ok', 1, 'done'), '/tmp/ok');
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const expand = root.querySelector(
+      '.sidebar-batch-card[data-batch-id="b-ok"] .sidebar-batch-expand',
+    ) as HTMLButtonElement;
+    expand.click();
+    const replyBtn = root.querySelector(
+      '[data-forjis-sidebar-reply]',
+    ) as HTMLButtonElement;
+    replyBtn.click();
+    const ctx = observed[0] as {
+      mode: string;
+      failureSummary: string | null;
+      failedTaskPath: string | null;
+    };
+    expect(ctx.mode).toBe('normal');
+    expect(ctx.failureSummary).toBeNull();
+    expect(ctx.failedTaskPath).toBeNull();
+  });
+
   it('NFR-011-002 — source contains no transport / mount / WebSocket imports', () => {
     const src = fs.readFileSync(
       path.resolve(process.cwd(), 'src/ui/sidebar.ts'),
