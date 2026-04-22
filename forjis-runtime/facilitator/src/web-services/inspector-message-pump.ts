@@ -95,10 +95,25 @@ async function dispatchInboundMessage(
 ): Promise<void> {
   const aware = service as ClientAwareInspectorService;
   switch (msg.type) {
-    case 'pin.create':
+    case 'pin.create': {
+      // The browser SDK generates `batchId` client-side on the first
+      // captured pin — the server never saw a `batch.create` frame for
+      // it. Adopt the client-supplied id lazily so the subsequent
+      // `addPin` call has a registered batch to attach to. Adoption is
+      // idempotent, so follow-up pins that reuse the same id do not
+      // trigger any state churn. Adoption also enforces the concurrent-
+      // batch guard, so a `pin.create` that would open a second batch
+      // while another is still clarifying / running surfaces a typed
+      // `ConcurrentBatchError` that the shared catch translates into
+      // `session.error { CONCURRENT_BATCH }`.
+      const existing = await service.getBatch(msg.batchId);
+      if (existing === null) {
+        await service.adoptExternalBatch(msg.batchId, msg.pin.platform);
+      }
       await service.addPin(msg.batchId, msg.pin);
       transport.send(clientId, { type: 'pin.ack', pinId: msg.pin.id });
       return;
+    }
     case 'batch.submit':
       await service.submitBatch(msg.batchId);
       transport.send(clientId, {
