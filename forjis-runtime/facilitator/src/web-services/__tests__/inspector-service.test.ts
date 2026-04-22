@@ -16,7 +16,11 @@ import { tmpdir } from 'node:os';
 
 import type { Batch, Pin } from '@forjis/shared';
 
-import { ConcurrentBatchError, InspectorServiceImpl } from '../inspector-service.js';
+import {
+  ConcurrentBatchError,
+  InspectorServiceImpl,
+  InvalidBatchIdError,
+} from '../inspector-service.js';
 
 /**
  * The 8-byte PNG magic signature used to construct a minimal synthetic
@@ -399,5 +403,89 @@ describe('InspectorServiceImpl', () => {
     await expect(service.addPin(batch.id, makePin('late', null))).rejects.toThrow(
       /no longer accepts pins/,
     );
+  });
+
+  // ------------------------------------------------------------------
+  // inspector-016: adoptExternalBatch
+  // ------------------------------------------------------------------
+
+  it('adoptExternalBatch creates a queued batch with the supplied id and staging dir', async () => {
+    const adopted = await service.adoptExternalBatch('client-batch-A', 'web');
+
+    expect(adopted.id).toBe('client-batch-A');
+    expect(adopted.platform).toBe('web');
+    expect(adopted.status).toBe('queued');
+    expect(adopted.pins).toEqual([]);
+    expect(adopted.screens).toEqual([]);
+    expect(adopted.parentBatchId).toBeNull();
+
+    await expect(stat(join(stagingRoot, 'client-batch-A'))).resolves.toBeDefined();
+
+    const fetched = await service.getBatch('client-batch-A');
+    expect(fetched?.id).toBe('client-batch-A');
+  });
+
+  it('adoptExternalBatch is idempotent when called twice with the same id', async () => {
+    const first = await service.adoptExternalBatch('A', 'web');
+    const second = await service.adoptExternalBatch('A', 'web');
+
+    expect(first.id).toBe('A');
+    expect(second.id).toBe('A');
+    expect(second.createdAt).toBe(first.createdAt);
+
+    // Only one batch was registered — no duplicate entries.
+    const listed = await service.listBatches();
+    expect(listed.filter(entry => entry.id === 'A')).toHaveLength(1);
+  });
+
+  it('adoptExternalBatch rejects an empty identifier before touching disk', async () => {
+    await expect(service.adoptExternalBatch('', 'web')).rejects.toBeInstanceOf(
+      InvalidBatchIdError,
+    );
+    const listed = await service.listBatches();
+    expect(listed).toHaveLength(0);
+  });
+
+  it.each([
+    ['bad:id', ':'],
+    ['bad@id', '@'],
+    ['bad\nid', 'newline'],
+    ['bad\tid', 'tab'],
+  ])('adoptExternalBatch rejects reserved character in "%s" (%s)', async (id, _label) => {
+    await expect(service.adoptExternalBatch(id, 'web')).rejects.toBeInstanceOf(
+      InvalidBatchIdError,
+    );
+    // No staging dir must have been created for the rejected id.
+    await expect(stat(join(stagingRoot, id))).rejects.toThrow();
+    const listed = await service.listBatches();
+    expect(listed.find(entry => entry.id === id)).toBeUndefined();
+  });
+
+  it('adoptExternalBatch throws ConcurrentBatchError while another batch is clarifying', async () => {
+    const running = await service.createBatch('web');
+    await service.submitBatch(running.id);
+
+    await expect(service.adoptExternalBatch('later-batch', 'web')).rejects.toBeInstanceOf(
+      ConcurrentBatchError,
+    );
+
+    // Guard fires before any filesystem / registry mutation — the rejected
+    // id must not appear in listBatches and must not have a staging dir.
+    const listed = await service.listBatches();
+    expect(listed.find(entry => entry.id === 'later-batch')).toBeUndefined();
+    await expect(stat(join(stagingRoot, 'later-batch'))).rejects.toThrow();
+  });
+
+  it('adoptExternalBatch is still idempotent while another batch is clarifying', async () => {
+    // Adopt first, THEN submit a different batch — the concurrent guard
+    // must not re-fire for an already-registered id because idempotency
+    // short-circuits before the guard.
+    const adopted = await service.adoptExternalBatch('stable-id', 'web');
+    const other = await service.createBatch('web');
+    await service.submitBatch(other.id);
+
+    const again = await service.adoptExternalBatch('stable-id', 'web');
+    expect(again.id).toBe(adopted.id);
+    expect(again.createdAt).toBe(adopted.createdAt);
   });
 });

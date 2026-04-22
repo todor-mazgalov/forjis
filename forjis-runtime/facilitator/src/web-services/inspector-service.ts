@@ -89,6 +89,52 @@ export class ConcurrentBatchError extends Error {
 }
 
 /**
+ * Reserved characters that MUST NOT appear in a batch identifier.
+ *
+ * `:` and `@` are reserved by the Inspector wire protocol for future
+ * namespacing / addressing use; newline and tab are reserved because batch
+ * identifiers are interpolated into log lines and terminal output where
+ * whitespace control characters would corrupt the surrounding stream.
+ */
+const RESERVED_BATCH_ID_CHARS: readonly string[] = [':', '@', '\n', '\t'];
+
+/**
+ * Domain error raised by {@link InspectorServiceImpl.adoptExternalBatch} when
+ * the caller-supplied identifier is empty or contains a reserved character.
+ *
+ * The offending identifier is attached as a non-enumerable readonly field so
+ * default `console.error(err)` and `util.inspect(err)` output do not echo
+ * the raw client-supplied string.
+ */
+export class InvalidBatchIdError extends Error {
+  /**
+   * The rejected client-supplied batch identifier. Stored non-enumerably;
+   * not included in the message text.
+   */
+  public readonly attemptedBatchId!: string;
+
+  /**
+   * Construct an `InvalidBatchIdError`.
+   *
+   * @param attemptedBatchId - Rejected identifier. Stored as a
+   *   non-enumerable readonly field so it never appears in default error
+   *   output.
+   * @param reason - Human-readable explanation of the rejection (e.g.
+   *   "empty" or "contains reserved character ':'").
+   */
+  constructor(attemptedBatchId: string, reason: string) {
+    super(`Invalid batch id: ${reason}.`);
+    this.name = 'InvalidBatchIdError';
+    Object.defineProperty(this, 'attemptedBatchId', {
+      value: attemptedBatchId,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+  }
+}
+
+/**
  * Allocate a new batch identifier.
  *
  * Format `batch-<ms-epoch>-<4-byte-hex>`. Mirrors `generateTaskId()` from
@@ -221,19 +267,38 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
    * @returns The newly created {@link Batch}.
    */
   async createBatch(platform: Platform): Promise<Batch> {
-    const batch: Batch = {
-      id: generateBatchId(),
-      platform,
-      screens: [],
-      pins: [],
-      createdAt: new Date().toISOString(),
-      parentBatchId: null,
-      status: 'queued',
-    };
+    return this.createBatchRecord(generateBatchId(), platform, null);
+  }
 
-    await ensureDir(join(this.stagingRoot, batch.id));
-    this.batches.set(batch.id, batch);
-    return batch;
+  /**
+   * Adopt a caller-supplied batch identifier as a fresh batch.
+   *
+   * Validates the identifier (empty + reserved-character rejection)
+   * before touching the filesystem. When a batch with `batchId` already
+   * exists, returns a deep-cloned snapshot so callers cannot mutate the
+   * service's internal state — matching {@link getBatch} semantics. When
+   * the identifier is new, enforces the same concurrent-batch guard as
+   * {@link submitBatch} against every other registered batch and then
+   * delegates to the shared {@link createBatchRecord} helper.
+   *
+   * @param batchId - Caller-supplied batch identifier.
+   * @param platform - Platform that initiated the batch.
+   * @returns The adopted or newly created batch.
+   * @throws {InvalidBatchIdError} When `batchId` is empty or contains a
+   *   reserved character (`:`, `@`, newline, tab).
+   * @throws {ConcurrentBatchError} When another batch is already
+   *   `"clarifying"` or `"running"`.
+   */
+  async adoptExternalBatch(batchId: string, platform: Platform): Promise<Batch> {
+    this.assertValidBatchId(batchId);
+
+    const existing = this.batches.get(batchId);
+    if (existing !== undefined) {
+      return structuredClone(existing);
+    }
+
+    this.assertNoConcurrentBatch(batchId);
+    return this.createBatchRecord(batchId, platform, null);
   }
 
   /**
@@ -281,13 +346,7 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
    */
   async submitBatch(batchId: string): Promise<void> {
     const batch = this.requireBatch(batchId);
-
-    for (const other of this.batches.values()) {
-      if (other.id === batch.id) continue;
-      if (other.status === 'clarifying' || other.status === 'running') {
-        throw new ConcurrentBatchError(batch.id, other.id);
-      }
-    }
+    this.assertNoConcurrentBatch(batch.id);
 
     batch.status = 'clarifying';
     this.emit('batch.submitted', { batch });
@@ -531,19 +590,90 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
    * @returns The newly created child batch (already in-registry).
    */
   private async createChildBatch(parentBatch: Batch): Promise<Batch> {
-    const childBatch: Batch = {
-      id: generateBatchId(),
-      platform: parentBatch.platform,
+    return this.createBatchRecord(
+      generateBatchId(),
+      parentBatch.platform,
+      parentBatch.id,
+    );
+  }
+
+  /**
+   * Shared batch-construction logic used by {@link createBatch},
+   * {@link adoptExternalBatch}, and {@link createChildBatch}.
+   *
+   * Builds the {@link Batch} record with `status: "queued"`, empty
+   * `pins`/`screens`, the supplied `parentBatchId`, and a `createdAt`
+   * timestamp, ensures the staging directory exists on disk, and
+   * registers the batch in the in-memory map before resolving.
+   *
+   * @param id - Identifier to assign to the new batch.
+   * @param platform - Platform that initiated the batch.
+   * @param parentBatchId - Parent batch identifier for iteration batches,
+   *   or `null` for top-level batches.
+   * @returns The newly created batch (live reference).
+   */
+  private async createBatchRecord(
+    id: string,
+    platform: Platform,
+    parentBatchId: string | null,
+  ): Promise<Batch> {
+    const batch: Batch = {
+      id,
+      platform,
       screens: [],
       pins: [],
       createdAt: new Date().toISOString(),
-      parentBatchId: parentBatch.id,
+      parentBatchId,
       status: 'queued',
     };
 
-    await ensureDir(join(this.stagingRoot, childBatch.id));
-    this.batches.set(childBatch.id, childBatch);
-    return childBatch;
+    await ensureDir(join(this.stagingRoot, batch.id));
+    this.batches.set(batch.id, batch);
+    return batch;
+  }
+
+  /**
+   * Validate a caller-supplied batch identifier.
+   *
+   * Rejects empty identifiers and identifiers that contain any character
+   * from {@link RESERVED_BATCH_ID_CHARS}. Called BEFORE any filesystem
+   * state is created so a rejected id leaves no trace on disk.
+   *
+   * @param batchId - Caller-supplied identifier to validate.
+   * @throws {InvalidBatchIdError} When the identifier is empty or
+   *   contains a reserved character.
+   */
+  private assertValidBatchId(batchId: string): void {
+    if (batchId.length === 0) {
+      throw new InvalidBatchIdError(batchId, 'empty');
+    }
+    for (const reserved of RESERVED_BATCH_ID_CHARS) {
+      if (batchId.includes(reserved)) {
+        const rendered = JSON.stringify(reserved);
+        throw new InvalidBatchIdError(batchId, `contains reserved character ${rendered}`);
+      }
+    }
+  }
+
+  /**
+   * Assert that no other registered batch is already in a non-queued
+   * state that would block the supplied batch from starting work.
+   *
+   * Shared by {@link submitBatch} and {@link adoptExternalBatch} so both
+   * entry points apply the exact same guard.
+   *
+   * @param attemptedBatchId - Identifier whose admission is being
+   *   checked.
+   * @throws {ConcurrentBatchError} When another batch is `"clarifying"`
+   *   or `"running"`.
+   */
+  private assertNoConcurrentBatch(attemptedBatchId: string): void {
+    for (const other of this.batches.values()) {
+      if (other.id === attemptedBatchId) continue;
+      if (other.status === 'clarifying' || other.status === 'running') {
+        throw new ConcurrentBatchError(attemptedBatchId, other.id);
+      }
+    }
   }
 
   /**

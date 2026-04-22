@@ -42,6 +42,33 @@ export interface InspectorService {
   createBatch(platform: Platform): Promise<Batch>;
 
   /**
+   * Adopt a caller-supplied batch identifier as a fresh batch.
+   *
+   * Used by wire layers (the Inspector message pump) to honour the browser
+   * SDK contract where the client generates `batchId` locally and attaches
+   * it to every `pin.create` / `batch.submit` frame. Idempotent: when a
+   * batch with `batchId` already exists, the existing record is returned
+   * unchanged and no filesystem or registry mutation occurs. When the
+   * identifier is new, behaves like {@link createBatch} but uses the
+   * supplied `batchId` instead of generating one.
+   *
+   * Implementations MUST reject reserved-character identifiers BEFORE any
+   * filesystem state is created. Reserved characters include `:`, `@`,
+   * newline, and tab. Empty identifiers are also rejected. Implementations
+   * MUST also enforce the concurrent-batch guard: when another batch is
+   * already `"clarifying"` or `"running"`, adoption of a new identifier
+   * MUST fail instead of silently creating the batch.
+   *
+   * @param batchId - Caller-supplied batch identifier.
+   * @param platform - Platform that initiated the batch.
+   * @returns The adopted or newly created batch.
+   * @throws When `batchId` is empty or contains a reserved character.
+   * @throws When another batch is already in progress
+   *   (`"clarifying"` or `"running"`).
+   */
+  adoptExternalBatch(batchId: string, platform: Platform): Promise<Batch>;
+
+  /**
    * Append a pin to an existing batch.
    *
    * @param batchId - Identifier of the target batch.

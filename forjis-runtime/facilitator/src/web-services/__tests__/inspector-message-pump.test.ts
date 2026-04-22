@@ -123,6 +123,58 @@ describe('wireInspectorMessagePump', () => {
   // FR-007
   // ------------------------------------------------------------------
 
+  it('auto-adopts a never-seen batchId on pin.create and sends pin.ack', async () => {
+    // inspector-016 regression: the browser SDK generates `batchId`
+    // client-side on the first captured pin. Before this fix, the pump
+    // called `addPin` directly, which threw `Unknown batch id`. The pump
+    // now adopts lazily, so a `pin.create` with a fresh id MUST succeed.
+    const pin = makePin('first-pin');
+
+    await transport.simulateInbound('client-1', {
+      type: 'pin.create',
+      batchId: 'client-generated-A',
+      pin,
+    });
+
+    expect(transport.sent).toEqual([
+      { clientId: 'client-1', msg: { type: 'pin.ack', pinId: 'first-pin' } },
+    ]);
+
+    const stored = await service.getBatch('client-generated-A');
+    expect(stored).not.toBeNull();
+    expect(stored?.pins).toHaveLength(1);
+    expect(stored?.pins[0].id).toBe('first-pin');
+    expect(stored?.platform).toBe('web');
+  });
+
+  it('rejects pin.create with session.error { CONCURRENT_BATCH } while another batch is clarifying', async () => {
+    // inspector-016 guardrail: adoption inherits the concurrent-batch
+    // guard, so a second, never-seen batchId arriving as a `pin.create`
+    // while batch A is still clarifying must surface CONCURRENT_BATCH
+    // and must NOT silently adopt.
+    const firstBatch = await service.createBatch('web');
+    await service.submitBatch(firstBatch.id);
+
+    await transport.simulateInbound('client-2', {
+      type: 'pin.create',
+      batchId: 'new-client-batch',
+      pin: makePin('pin-blocked'),
+    });
+
+    expect(transport.sent).toHaveLength(1);
+    const frame = transport.sent[0];
+    expect(frame.clientId).toBe('client-2');
+    expect(frame.msg.type).toBe('session.error');
+    if (frame.msg.type === 'session.error') {
+      expect(frame.msg.code).toBe('CONCURRENT_BATCH');
+    }
+
+    // No silent adoption: the rejected batchId MUST NOT appear in the
+    // service registry.
+    const leaked = await service.getBatch('new-client-batch');
+    expect(leaked).toBeNull();
+  });
+
   it('dispatches pin.create to addPin and sends pin.ack to the originating client', async () => {
     const batch = await service.createBatch('web');
     const pin = makePin('pin-x');
@@ -264,6 +316,19 @@ describe('wireInspectorMessagePump', () => {
     const stubService: InspectorService = {
       createBatch: async () => {
         throw new Error('unused');
+      },
+      adoptExternalBatch: async () => {
+        // Resolve so the pump proceeds to `addPin`, which is the throw
+        // path this test exercises.
+        return {
+          id: 'b1',
+          platform: 'web',
+          screens: [],
+          pins: [],
+          createdAt: '2026-04-22T00:00:00.000Z',
+          parentBatchId: null,
+          status: 'queued',
+        };
       },
       addPin: async () => {
         throw new Error('boom');
