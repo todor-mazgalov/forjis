@@ -632,8 +632,19 @@ export class ClaudeEngine implements ForjisEngine {
   /**
    * Populates toolName, parentId, and payload on a TaskEvent from the first
    * tool_use block (assistant) or tool_result block (user) in the source
-   * stream event. Leaves the fields undefined for other event types and for
-   * assistant events that contain only text.
+   * stream event.
+   *
+   * For assistant events that carry only text blocks, concatenates every
+   * text block's untruncated `text` into `taskEvent.payload` as a string.
+   * The `content` field is a display-oriented preview capped at
+   * {@link formatEvent}'s 200-character limit; downstream consumers that
+   * need the full line (for example the inspector clarifier runner
+   * parsing JSON payloads) read from `payload` instead.
+   *
+   * @param taskEvent - Event record to enrich in place.
+   * @param event - Source stream-json event.
+   * @param ctx - Per-invocation context used to resolve tool names from
+   *   tool_use ids when enriching `tool_result` blocks.
    */
   private enrichEventPayload(
     taskEvent: TaskEvent,
@@ -648,6 +659,12 @@ export class ClaudeEngine implements ForjisEngine {
           taskEvent.payload = block.input;
           return;
         }
+      }
+      const fullText = event.message.content
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('');
+      if (fullText.length > 0) {
+        taskEvent.payload = fullText;
       }
       return;
     }

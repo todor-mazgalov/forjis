@@ -772,3 +772,115 @@ describe('InspectorClarifierRunner — engine completion without finalize', () =
     }
   });
 });
+
+describe('InspectorClarifierRunner — full-sized assistant payload', () => {
+  it('ingests an untruncated assistant JSON line delivered via event.payload', async () => {
+    // Regression coverage for inspector-018-fix-3. The Claude adapter
+    // caps `event.content` at 200 characters for terminal display, so
+    // any realistic clarify question or finalize payload is truncated
+    // past that boundary. The fix writes the untruncated text into
+    // `event.payload`; this test exercises that exact shape against
+    // the runner's `ingestEngineEvent` path.
+    const h = await buildHarness();
+    try {
+      const batchId = 'batch-full-payload';
+      const batch = await seedBatch(h, batchId, 1);
+
+      h.service.emit('batch.submitted', { batch });
+      await waitFor(() => h.engine.invocations.length === 1);
+
+      const invocation = h.engine.invocations[0];
+      expect(invocation.onEvent).toBeDefined();
+
+      const question: ClarifyQuestion = {
+        id: 'q-full',
+        // Long enough that the `[THINK] ` + text + `...` preview is
+        // truncated well before the JSON closing brace.
+        text: `Full-sized question body ${'x'.repeat(500)}?`,
+        options: [
+          { id: 'a', label: 'Option A', description: 'A'.repeat(200) },
+          { id: 'b', label: 'Option B', description: 'B'.repeat(200) },
+        ],
+        allowFreeText: true,
+      };
+      const fullJson = JSON.stringify({ type: 'question', question });
+      expect(fullJson.length).toBeGreaterThan(200);
+      const truncatedPreview = `[THINK] ${fullJson.slice(0, 200)}...`;
+
+      // Answer early so the runner learns the client id — before the
+      // first assistant event arrives the answer should be buffered.
+      await h.service.answerClarifyWithClient(
+        batchId,
+        makeAnswer('q-full'),
+        'client-full',
+      );
+      // No engine injection yet — the buffer is waiting on the first
+      // assistant-text event to flush.
+      expect(h.engine.injections).toHaveLength(0);
+
+      invocation.onEvent!({
+        timestamp: new Date().toISOString(),
+        type: 'assistant',
+        role: 'orchestrator',
+        content: truncatedPreview,
+        payload: fullJson,
+      });
+
+      // The runner must have parsed the JSON (via payload), forwarded
+      // the question to the transport, and flushed the buffered answer.
+      await waitFor(() => h.sent.some((f) => f.msg.type === 'clarify.question'));
+      const questionFrame = h.sent.find((f) => f.msg.type === 'clarify.question');
+      expect(questionFrame).toBeDefined();
+      expect(questionFrame!.clientId).toBe('client-full');
+      expect(
+        (questionFrame!.msg as { question: ClarifyQuestion }).question.text,
+      ).toBe(question.text);
+
+      await waitFor(() => h.engine.injections.length === 1);
+      expect(h.engine.injections[0].taskId).toBe(batchId);
+    } finally {
+      await cleanup(h);
+    }
+  });
+});
+
+describe('InspectorClarifierRunner — initial user turn delivered to engine', () => {
+  it('passes batchId and the full pin array through modeArgs on engine.invoke', async () => {
+    const h = await buildHarness();
+    try {
+      const batchId = 'batch-initial-turn';
+      const batch = await seedBatch(h, batchId, 3);
+
+      h.service.emit('batch.submitted', { batch });
+      await waitFor(() => h.engine.invocations.length === 1);
+
+      const invocation = h.engine.invocations[0];
+      expect(invocation.mode).toBe('inspector-clarify');
+      expect(invocation.taskId).toBe(batchId);
+
+      const modeArgs = invocation.modeArgs;
+      expect(modeArgs).toBeDefined();
+      expect(modeArgs!.batchId).toBe(batchId);
+
+      // batchDir points at the staging dir so the orchestrator command
+      // can read the staged pins via `Read`/`Glob`.
+      expect(typeof modeArgs!.batchDir).toBe('string');
+      expect(modeArgs!.batchDir).toBe(join(h.stagingRoot, batchId));
+
+      // pins is JSON-stringified; parsing must yield the three pins
+      // the batch was seeded with and each pin must retain its id.
+      const pinsArg = modeArgs!.pins;
+      expect(typeof pinsArg).toBe('string');
+      const pins = JSON.parse(pinsArg as string) as Array<{ id: string }>;
+      expect(pins).toHaveLength(3);
+      expect(pins[0].id).toBe(`pin-${batchId}-01`);
+      expect(pins[2].id).toBe(`pin-${batchId}-03`);
+
+      // Persona body is forwarded verbatim so the orchestrator command
+      // can render it as the system prompt.
+      expect(modeArgs!.personaBody).toBe('# Clarifier body');
+    } finally {
+      await cleanup(h);
+    }
+  });
+});

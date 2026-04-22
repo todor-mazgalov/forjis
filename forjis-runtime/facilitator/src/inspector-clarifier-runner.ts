@@ -155,6 +155,7 @@ interface ActiveRun {
   /** Answers buffered before the first assistant JSON event arrived. */
   pendingAnswerBuffer: Array<{ answer: ClarifyAnswer; clientId: string | null }>;
   firstAssistantSeen: boolean;
+  firstEngineEventLogged: boolean;
   finalised: boolean;
 }
 
@@ -352,6 +353,10 @@ export class InspectorClarifierRunner {
     const persona = this.options.personaLoader(this.options.configDir);
     const stagingDir = join(this.options.stagingRoot, batch.id);
 
+    console.log(
+      `[clarifier]: run ${batch.id} started (cwd=${stagingDir}, persona=${persona.name})`,
+    );
+
     const run: ActiveRun = {
       batchId: batch.id,
       batch,
@@ -369,6 +374,7 @@ export class InspectorClarifierRunner {
       budgetTimer: null,
       pendingAnswerBuffer: [],
       firstAssistantSeen: false,
+      firstEngineEventLogged: false,
       finalised: false,
     };
 
@@ -459,10 +465,20 @@ export class InspectorClarifierRunner {
   private ingestEngineEvent(batchId: string, event: TaskEvent): void {
     const run = this.runs.get(batchId);
     if (!run) return;
+    if (!run.firstEngineEventLogged) {
+      run.firstEngineEventLogged = true;
+      console.log(
+        `[clarifier]: run ${batchId} first engine event type=${event.type}`,
+      );
+    }
     if (event.type !== 'assistant') return;
 
     const text = extractAssistantText(event);
     if (text === null) return;
+
+    console.log(
+      `[clarifier]: run ${batchId} assistant-text bytes=${text.length} preview=${truncate(text, 80)}`,
+    );
 
     const parsed = tryParseJson(text);
     if (parsed === null) {
@@ -709,6 +725,9 @@ export class InspectorClarifierRunner {
 
     const { projectDir, stagingRoot, transport } = this.options;
     const targetDir = join(projectDir, payload.taskDir);
+    console.log(
+      `[clarifier]: run ${run.batchId} finalize taskDir=${targetDir}`,
+    );
     await ensureDir(targetDir);
 
     await atomicWriteFile(join(targetDir, 'TASK.md'), payload.taskMd);
@@ -866,6 +885,7 @@ export class InspectorClarifierRunner {
     if (run.originatingClientId === null && clientId !== null) {
       run.originatingClientId = clientId;
     }
+    console.log(`[clarifier]: run ${batchId} abort reason=${reason}`);
     run.terminalReason = reason;
 
     const pid = readPidSync(this.options.projectDir, batchId);
@@ -982,17 +1002,25 @@ export class InspectorClarifierRunner {
  * Extract the raw assistant text from a {@link TaskEvent} emitted by
  * the Claude adapter.
  *
- * The adapter's `formatEvent` step produces a `[THINK] <text>...`
- * preview in `event.content`, which is only an 200-character truncation.
- * The full line is available on `event.payload` only for tool-use
- * events; for text-only assistant turns we parse the preview after
- * stripping the prefix. The inspector-clarify orchestrator is
- * contractually required to emit JSON short enough to fit that buffer.
+ * Production path: the Claude adapter writes the full, untruncated
+ * assistant text into `event.payload` (see
+ * `claude-engine.ts::enrichEventPayload`). We prefer that value because
+ * `event.content` is a display-oriented preview capped at 200
+ * characters, which is too short for a clarifier `question` or
+ * `finalize` JSON line.
+ *
+ * Fallback path: when a caller (for example a unit test) only populates
+ * `event.content` with the legacy `[THINK] <text>...` preview, strip
+ * the prefix and the trailing ellipsis so the JSON parser sees the
+ * payload verbatim.
  *
  * @param event - TaskEvent produced by the engine.
  * @returns The raw text body, or `null` when the event carries no text.
  */
 function extractAssistantText(event: TaskEvent): string | null {
+  if (typeof event.payload === 'string' && event.payload.length > 0) {
+    return event.payload;
+  }
   const content = event.content;
   if (typeof content !== 'string' || content.length === 0) return null;
   const prefix = '[THINK] ';
