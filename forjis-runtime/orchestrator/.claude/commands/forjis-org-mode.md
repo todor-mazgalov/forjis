@@ -425,6 +425,10 @@ finish, and re-evaluate any new roles. Preserve existing `branches` data.
 
 ## Step 7: Resume Detection
 
+**Pid self-check.** `state.yaml: running` + live `<task>/pid` on a fresh
+start are you. Halt as "another pipeline running" only when the pid is
+alive AND `!= $$`.
+
 **Precondition — weights must exist.** Before evaluating artifacts, confirm
 `<TARGET_PROJECT>/.forjis/tasks/<TASK_ID>/weights.yaml` exists and lists at least
 one role with `decision: RUN`. If the file is missing or has zero RUN roles, Step 5

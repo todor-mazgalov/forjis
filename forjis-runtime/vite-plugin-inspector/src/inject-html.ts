@@ -26,6 +26,14 @@ export interface InspectorInjectEnv {
   readonly url: string;
   /** Session token the inspector client should join with. */
   readonly token: string;
+  /**
+   * URL of the plugin's virtual mount module. Emitted as a module
+   * `<script src=...>`; Vite resolves this URL through its `resolveId`
+   * pipeline so `@forjis/inspector` and its transitive bare deps get
+   * rewritten by the normal JS transform. Omit to skip script emission
+   * (meta tags only).
+   */
+  readonly mountScriptUrl?: string;
 }
 
 /**
@@ -64,8 +72,17 @@ function buildInjectionBlock(env: InspectorInjectEnv): string {
     '" content="' +
     escapeAttr(env.token) +
     '">';
+  if (!env.mountScriptUrl) {
+    return urlTag + '\n' + tokenTag;
+  }
+  // Module script pointing at the plugin's virtual `mount` module. Served
+  // by Vite through the `resolveId`/`load` hooks in the plugin, which runs
+  // the returned source through the same transform pipeline as user code —
+  // so `@forjis/inspector` and every transitive bare dep resolves.
   const scriptTag =
-    '<script type="module">import { mount } from "@forjis/inspector"; mount();</script>';
+    '<script type="module" src="' +
+    escapeAttr(env.mountScriptUrl) +
+    '"></script>';
   return urlTag + '\n' + tokenTag + '\n' + scriptTag;
 }
 

@@ -524,6 +524,15 @@ export async function devCommand(
       transport: bundle.transport,
     });
 
+    // Export session URL + token into process.env so the Vite subprocess
+    // (and its @forjis/vite-inspector plugin) can read them via process.env
+    // and bake them into the served <meta> tags. Without this the browser
+    // loads the inspector SDK with empty url/token and mount() throws
+    // "missing url". Set before spawn so the child inherits them.
+    const wsUrl = `ws://${resolved.printedHost}:${resolved.port}/inspector/ws?t=${token}`;
+    process.env.FORJIS_INSPECTOR_URL = wsUrl;
+    process.env.FORJIS_INSPECTOR_TOKEN = token;
+
     ctx.devChild = spawnDevServer({
       command: resolved.devServerCmd,
       cwd: effectiveCwd,

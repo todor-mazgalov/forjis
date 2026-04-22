@@ -153,6 +153,16 @@ function runStampTransform(
  *   {@link ForjisInspectorOptions}.
  * @returns Configured Vite `Plugin` object.
  */
+/**
+ * Virtual module id for the mount bootstrap. Resolved to the `\0`-prefixed
+ * form so Vite's loader owns it (no filesystem probe), and exposed to the
+ * browser via `/@id/__x00__<VIRTUAL_MOUNT_ID>` — the standard Vite scheme
+ * for reaching a virtual module from an HTML `<script src>`.
+ */
+const VIRTUAL_MOUNT_ID = 'virtual:@forjis/vite-inspector/mount';
+const RESOLVED_MOUNT_ID = '\0' + VIRTUAL_MOUNT_ID;
+const MOUNT_SCRIPT_URL = '/@id/__x00__' + VIRTUAL_MOUNT_ID;
+
 export function forjisInspector(options?: ForjisInspectorOptions): Plugin {
   const resolved = resolveOptions(options);
   let projectRoot = process.cwd();
@@ -162,13 +172,31 @@ export function forjisInspector(options?: ForjisInspectorOptions): Plugin {
     configResolved(config) {
       projectRoot = config.root;
     },
+    resolveId(id) {
+      if (id === VIRTUAL_MOUNT_ID) return RESOLVED_MOUNT_ID;
+      return null;
+    },
+    load(id) {
+      if (id === RESOLVED_MOUNT_ID) {
+        // Two-line bootstrap. The bare `@forjis/inspector` import is
+        // rewritten by Vite's normal module transform when this virtual
+        // module is served, so `modern-screenshot` and every other
+        // transitive bare dep also resolve through optimizeDeps.
+        return `import { mount } from '@forjis/inspector';\nmount();\n`;
+      }
+      return null;
+    },
     transformIndexHtml(html: string) {
       if (!resolved.inject) {
         return undefined;
       }
       const url = process.env[resolved.urlEnvVar] ?? '';
       const token = process.env[resolved.tokenEnvVar] ?? '';
-      return injectInspectorIntoHtml(html, { url, token });
+      return injectInspectorIntoHtml(html, {
+        url,
+        token,
+        mountScriptUrl: MOUNT_SCRIPT_URL,
+      });
     },
     transform(code: string, id: string) {
       if (!resolved.stamp) {

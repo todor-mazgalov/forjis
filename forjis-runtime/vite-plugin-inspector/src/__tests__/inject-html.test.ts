@@ -14,7 +14,7 @@ import { forjisInspector } from '../index.js';
 import { injectInspectorIntoHtml } from '../inject-html.js';
 
 describe('injectInspectorIntoHtml', () => {
-  it('injects meta tags and the mount script before </body> in the documented order', () => {
+  it('injects both meta tags before </body> in the documented order', () => {
     const html = '<html><body><div id="app"></div></body></html>';
     const out = injectInspectorIntoHtml(html, {
       url: 'ws://localhost:5173/inspector',
@@ -26,14 +26,39 @@ describe('injectInspectorIntoHtml', () => {
     const tokenIdx = out.indexOf(
       '<meta name="forjis-inspector-token" content="tkn">',
     );
-    const scriptIdx = out.indexOf(
-      '<script type="module">import { mount } from "@forjis/inspector"; mount();</script>',
-    );
     const bodyIdx = out.lastIndexOf('</body>');
     expect(urlIdx).toBeGreaterThanOrEqual(0);
     expect(tokenIdx).toBeGreaterThan(urlIdx);
-    expect(scriptIdx).toBeGreaterThan(tokenIdx);
-    expect(bodyIdx).toBeGreaterThan(scriptIdx);
+    expect(bodyIdx).toBeGreaterThan(tokenIdx);
+  });
+
+  it('omits the <script> tag when mountScriptUrl is absent', () => {
+    const html = '<html><body></body></html>';
+    const out = injectInspectorIntoHtml(html, {
+      url: 'ws://x/ws',
+      token: 't',
+    });
+    expect(out).not.toContain('<script');
+    expect(out).not.toContain('@forjis/inspector');
+  });
+
+  it('emits a module <script src=...> pointing at mountScriptUrl', () => {
+    const html = '<html><body></body></html>';
+    const out = injectInspectorIntoHtml(html, {
+      url: 'ws://x/ws',
+      token: 't',
+      mountScriptUrl: '/@id/__x00__virtual:@forjis/vite-inspector/mount',
+    });
+    expect(out).toContain(
+      '<script type="module" src="/@id/__x00__virtual:@forjis/vite-inspector/mount"></script>',
+    );
+    // The script must come after both meta tags so they exist on the DOM
+    // by the time the module evaluates and calls mount().
+    const scriptIdx = out.indexOf('<script type="module"');
+    const urlMetaIdx = out.indexOf('forjis-inspector-url');
+    const tokenMetaIdx = out.indexOf('forjis-inspector-token');
+    expect(scriptIdx).toBeGreaterThan(urlMetaIdx);
+    expect(scriptIdx).toBeGreaterThan(tokenMetaIdx);
   });
 
   it('is idempotent — a second invocation returns byte-identical output', () => {
@@ -53,7 +78,9 @@ describe('injectInspectorIntoHtml', () => {
     expect(out.startsWith(html)).toBe(true);
     expect(out).toContain('<meta name="forjis-inspector-url"');
     expect(out).toContain('<meta name="forjis-inspector-token"');
-    expect(out).toContain('import { mount } from "@forjis/inspector"');
+    // The block intentionally omits a <script> tag; callers wire up mount()
+    // from their own entry point so Vite's JS transform resolves deps.
+    expect(out).not.toContain('<script');
   });
 
   it('escapes &, <, >, and " inside attribute values', () => {
