@@ -115,7 +115,13 @@ async function dispatchInboundMessage(
       }
       return;
     case 'reply.create':
-      await service.replyToPin(msg.parentPinId, msg.pin, msg.comment);
+      await service.replyToPin(
+        msg.parentPinId,
+        msg.pin,
+        msg.comment,
+        msg.failureSummary,
+        msg.failedTaskPath,
+      );
       transport.send(clientId, { type: 'pin.ack', pinId: msg.pin.id });
       return;
     case 'batch.abort':

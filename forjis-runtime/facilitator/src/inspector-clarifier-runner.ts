@@ -34,14 +34,38 @@ import type {
 } from './engine.js';
 import { EngineCapabilityError } from './errors.js';
 import type { ClarifierAgent } from './inspector-agent-loader.js';
+import {
+  summarizeFailure,
+  tailEventLog,
+} from './inspector-failure-summarizer.js';
 import { atomicWriteFile, ensureDir } from './state.js';
 import type { TaskEvent } from './types.js';
 import { killProcess, readPidSync } from './process-utils.js';
 import type { TokenTracker } from './token-tracker.js';
-import type { InspectorServiceImpl } from './web-services/inspector-service.js';
+import type {
+  BatchFailedEventPayload,
+  InspectorServiceImpl,
+} from './web-services/inspector-service.js';
 
 /** Default hard cap on outbound `clarify.question` events per run. */
 const DEFAULT_MAX_TURNS = 10;
+
+/**
+ * Maximum number of `{ batchId: clientId }` entries retained in the
+ * {@link InspectorClarifierRunner.recentBatchClients} FIFO map.
+ *
+ * Bounds memory growth for long-running dev sessions; 50 covers the
+ * common case where an orchestrator run failure arrives within minutes
+ * of the clarifier finalising.
+ */
+const RECENT_BATCH_CLIENTS_MAX = 50;
+
+/**
+ * Maximum number of log entries sampled from `events.jsonl` when
+ * building a failure summary. Kept in sync with the summarizer module's
+ * own cap so the two agree on the tail window.
+ */
+const FAILURE_TAIL_MAX_LINES = 500;
 
 /**
  * Grace period between a `"budget.exceeded"` hint being injected and a
@@ -194,6 +218,16 @@ export class InspectorClarifierRunner {
     maxTurns: number;
   };
   private readonly runs = new Map<string, ActiveRun>();
+  /**
+   * Bounded FIFO map from `batchId` to the originating `clientId`.
+   *
+   * Populated at finalize time so failure events that arrive after the
+   * clarifier subprocess has already torn down (the common case) can
+   * still be routed back to the correct inspector client. Insertion
+   * order matters — the oldest entry is evicted once the map size
+   * exceeds {@link RECENT_BATCH_CLIENTS_MAX}.
+   */
+  private readonly recentBatchClients = new Map<string, string>();
   private started = false;
   private readonly onBatchSubmitted: (payload: { batch: Batch }) => void;
   private readonly onClarifyAnswer: (payload: {
@@ -202,6 +236,7 @@ export class InspectorClarifierRunner {
     clientId: string | null;
   }) => void;
   private readonly onBatchAbort: (payload: { batchId: string; clientId: string | null }) => void;
+  private readonly onBatchFailed: (payload: BatchFailedEventPayload) => void;
 
   /**
    * Build a new runner.
@@ -242,6 +277,14 @@ export class InspectorClarifierRunner {
         );
       });
     };
+    this.onBatchFailed = (payload) => {
+      void this.handleFailure(payload).catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[inspector-clarifier-runner]: failure handler threw for "${payload.batchId}": ${message}`,
+        );
+      });
+    };
   }
 
   /**
@@ -256,6 +299,7 @@ export class InspectorClarifierRunner {
     service.on('batch.submitted', this.onBatchSubmitted);
     service.on('clarify.answer', this.onClarifyAnswer);
     service.on('batch.abort', this.onBatchAbort);
+    service.on('batch.failed', this.onBatchFailed);
     this.started = true;
   }
 
@@ -272,6 +316,7 @@ export class InspectorClarifierRunner {
     service.off('batch.submitted', this.onBatchSubmitted);
     service.off('clarify.answer', this.onClarifyAnswer);
     service.off('batch.abort', this.onBatchAbort);
+    service.off('batch.failed', this.onBatchFailed);
     this.started = false;
 
     const batchIds = Array.from(this.runs.keys());
@@ -374,6 +419,13 @@ export class InspectorClarifierRunner {
    * Reads `<stagingRoot>/<batchId>/parent.json` and returns the parsed
    * object. Returns `null` for batches without `parentBatchId` or when
    * the file is missing or unreadable.
+   *
+   * The returned value is an opaque `Record<string, unknown>` — the
+   * runner does not validate its shape. In particular, the optional
+   * `failureSummary: string` and `failedTaskPath: string` fields added
+   * by the inspector-failure-reply flow are forwarded verbatim into
+   * `modeArgs.parentContext` so the clarifier persona can consume them
+   * without any facilitator-side transformation.
    *
    * @param batch - Batch whose parent context should be loaded.
    * @returns The parsed parent context object, or `null`.
@@ -679,6 +731,7 @@ export class InspectorClarifierRunner {
         batchId: run.batchId,
         taskPath: payload.taskDir,
       });
+      this.rememberClient(run.batchId, run.originatingClientId);
     }
 
     await rm(stagingDir, { recursive: true, force: true });
@@ -689,6 +742,85 @@ export class InspectorClarifierRunner {
       run.budgetTimer = null;
     }
     this.runs.delete(run.batchId);
+  }
+
+  /**
+   * Store a `batchId → clientId` mapping with FIFO eviction.
+   *
+   * Keeps the most recent {@link RECENT_BATCH_CLIENTS_MAX} entries. When
+   * a new entry would push the map past the cap, the oldest entry (the
+   * first key in insertion order) is evicted. Re-inserting an existing
+   * key refreshes its position to the end of the insertion order.
+   *
+   * @param batchId - Identifier the failure event will carry.
+   * @param clientId - Originating inspector client identifier.
+   */
+  private rememberClient(batchId: string, clientId: string): void {
+    if (this.recentBatchClients.has(batchId)) {
+      this.recentBatchClients.delete(batchId);
+    }
+    this.recentBatchClients.set(batchId, clientId);
+    while (this.recentBatchClients.size > RECENT_BATCH_CLIENTS_MAX) {
+      const firstKey = this.recentBatchClients.keys().next().value;
+      if (firstKey === undefined) break;
+      this.recentBatchClients.delete(firstKey);
+    }
+  }
+
+  /**
+   * Handle a `batch.failed` event for an inspector-sourced task.
+   *
+   * Resolves the originating client, tails `events.jsonl`, asks
+   * {@link summarizeFailure} for a bounded reason string, and sends a
+   * `task.status { status: 'failed', summary }` transport frame to that
+   * client. Never throws; all error paths log exactly one
+   * `[inspector-clarifier-runner]:` warning and return.
+   *
+   * @param payload - Failure-event payload from `InspectorServiceImpl`.
+   */
+  private async handleFailure(payload: BatchFailedEventPayload): Promise<void> {
+    if (!payload.taskId.startsWith('inspector-')) {
+      return;
+    }
+    const clientId =
+      this.runs.get(payload.batchId)?.originatingClientId ??
+      this.recentBatchClients.get(payload.batchId) ??
+      null;
+    if (clientId === null) {
+      console.warn(
+        `[inspector-clarifier-runner]: no client id for failed batch "${payload.batchId}"`,
+      );
+      return;
+    }
+
+    try {
+      const events = await tailEventLog(
+        join(payload.taskPath, 'events.jsonl'),
+        FAILURE_TAIL_MAX_LINES,
+      );
+      const summary = await summarizeFailure({
+        batchId: payload.batchId,
+        taskId: payload.taskId,
+        taskPath: payload.taskPath,
+        category: payload.category,
+        events,
+        engine: this.options.engine,
+        projectDir: this.options.projectDir,
+        configDir: this.options.configDir,
+        tokenTracker: this.options.tokenTracker,
+      });
+      this.options.transport.send(clientId, {
+        type: 'task.status',
+        batchId: payload.batchId,
+        status: 'failed',
+        summary,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[inspector-clarifier-runner]: failed to deliver failure summary for "${payload.batchId}": ${message}`,
+      );
+    }
   }
 
   /**

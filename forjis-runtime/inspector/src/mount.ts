@@ -15,7 +15,6 @@
  */
 
 import type {
-  Batch,
   InspectorMessage,
   Pin,
   PinTarget,
@@ -50,6 +49,7 @@ import {
 import {
   createReplySheet,
   type ReplySheetHandle,
+  type ReplySubmitPayload,
 } from './reply/reply-sheet.js';
 import { InspectorClient } from './transport.js';
 import {
@@ -62,7 +62,6 @@ import {
   type QueuePanelHandle,
 } from './ui/queue-panel.js';
 import { createSidebar, type SidebarHandle } from './ui/sidebar.js';
-import { generateUuid } from './util/uuid.js';
 
 /** `id` of the root placeholder element appended to `document.body`. */
 const ROOT_ELEMENT_ID = 'forjis-inspector-root';
@@ -343,11 +342,23 @@ async function bundleFromHistoricPin(pin: Pin): Promise<ReplyCaptureBundle> {
 }
 
 /**
- * Build the reply batch + reply pin and dispatch `pin.create` +
- * `batch.submit` to the transport in that order (FR-011-031).
+ * Build the reply pin and dispatch a single `reply.create` frame to the
+ * transport (FR-011-031, inspector-013).
+ *
+ * The facilitator-side `replyToPin` handler allocates the child batch and
+ * writes `parent.json`, so the inspector no longer needs to emit a
+ * separate `pin.create` + `batch.submit` pair for replies. When the
+ * originating sheet was opened in failure mode, the reply sheet attaches
+ * `failureSummary` and `failedTaskPath` to the payload; both are threaded
+ * into the outbound frame so the facilitator can persist them into
+ * `parent.json` for the clarifier persona. Both fields are omitted from
+ * the frame when the reply is an ordinary (non-failure) reply, which
+ * keeps the wire shape backward-compatible because the shared protocol
+ * types declare them optional.
  *
  * @param client - Transport client.
- * @param payload - Parent linkage + reply comment from the reply sheet.
+ * @param payload - Parent linkage + reply comment (plus optional failure
+ *   metadata) from the reply sheet.
  * @param capture - Pre-captured blobs for the new pin.
  */
 async function dispatchReplyBatch(
@@ -357,6 +368,8 @@ async function dispatchReplyBatch(
     parentBatchId: string;
     parentTaskPath: string;
     comment: string;
+    failureSummary: string | null;
+    failedTaskPath: string | null;
   },
   capture: ReplyCaptureBundle,
 ): Promise<void> {
@@ -371,17 +384,19 @@ async function dispatchReplyBatch(
     },
     { parentPinId: payload.parentPinId },
   );
-  const replyBatch: Batch = {
-    id: generateUuid(),
-    platform: 'web',
-    screens: replyPin.screen === null ? [] : [replyPin.screen],
-    pins: [replyPin],
-    createdAt: new Date().toISOString(),
-    parentBatchId: payload.parentBatchId,
-    status: 'queued',
+  const frame: InspectorMessage = {
+    type: 'reply.create',
+    parentPinId: payload.parentPinId,
+    pin: replyPin,
+    comment: payload.comment,
+    ...(payload.failureSummary !== null
+      ? { failureSummary: payload.failureSummary }
+      : {}),
+    ...(payload.failedTaskPath !== null
+      ? { failedTaskPath: payload.failedTaskPath }
+      : {}),
   };
-  client.send({ type: 'pin.create', batchId: replyBatch.id, pin: replyPin });
-  client.send({ type: 'batch.submit', batchId: replyBatch.id });
+  client.send(frame);
 }
 
 /** Resources built inside {@link mount} and torn down on unmount. */
@@ -541,11 +556,21 @@ function wireShadowComponents(
       if (!replySheet) {
         return;
       }
+      const failure =
+        ctx.mode === 'failure' &&
+        ctx.failureSummary !== null &&
+        ctx.failedTaskPath !== null
+          ? {
+              failureSummary: ctx.failureSummary,
+              failedTaskPath: ctx.failedTaskPath,
+            }
+          : null;
       replySheet.open({
         pin: ctx.pin,
         batch: ctx.batch,
         taskPath: ctx.taskPath,
         summary: ctx.summary,
+        failure,
       });
     },
   });
@@ -568,12 +593,7 @@ function wireShadowComponents(
  */
 async function handleReplySubmit(
   client: InspectorClient,
-  payload: {
-    parentPinId: string;
-    parentBatchId: string;
-    parentTaskPath: string;
-    comment: string;
-  },
+  payload: ReplySubmitPayload,
 ): Promise<void> {
   const history = getHistory();
   const entry = history.find((e) => e.batch.id === payload.parentBatchId);

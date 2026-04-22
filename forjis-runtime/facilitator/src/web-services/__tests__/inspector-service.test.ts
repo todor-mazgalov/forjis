@@ -286,6 +286,41 @@ describe('InspectorServiceImpl', () => {
     expect(parsed.parentPin.capture.elementScreenshot).toBe(
       `.forjis/inspector/${parentBatch.id}/pin-01-element.png`,
     );
+    // Ordinary (non-failure) reply: both failure-context fields are
+    // persisted as `null` so the on-disk schema is stable (inspector-013).
+    expect(parsed.failureSummary).toBeNull();
+    expect(parsed.failedTaskPath).toBeNull();
+  });
+
+  it('FR-013 — replyToPin forwards failureSummary and failedTaskPath into parent.json', async () => {
+    const parentBatch = await service.createBatch('web');
+    const parentPin = makePin('parent-f1', '/home');
+    await service.addPin(parentBatch.id, parentPin);
+
+    const replyPin = makePin('reply-f1', '/home');
+    const failureSummary = 'Build failed in components/Card.tsx';
+    const failedTaskPath = '.forjis/tasks/inspector-xyz';
+    await service.replyToPin(
+      parentPin.id,
+      replyPin,
+      'please add the missing import',
+      failureSummary,
+      failedTaskPath,
+    );
+
+    const batches = await service.listBatches();
+    const child = batches.find(b => b.parentBatchId === parentBatch.id);
+    expect(child).toBeDefined();
+
+    const parentJsonPath = join(stagingRoot, child!.id, 'parent.json');
+    const raw = await readFile(parentJsonPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    expect(parsed.failureSummary).toBe(failureSummary);
+    expect(parsed.failedTaskPath).toBe(failedTaskPath);
+    // Core parent linkage is still recorded alongside the new fields.
+    expect(parsed.parentBatchId).toBe(parentBatch.id);
+    expect(parsed.childBatchId).toBe(child!.id);
+    expect(parsed.parentPin.id).toBe(parentPin.id);
   });
 
   // ------------------------------------------------------------------

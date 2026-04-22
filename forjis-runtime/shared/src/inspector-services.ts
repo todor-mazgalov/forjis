@@ -77,13 +77,29 @@ export interface InspectorService {
    *
    * The new pin is linked to its parent via `pin.parentPinId = parentPinId`
    * inside an iteration batch, and the supplied comment is attached to the
-   * new pin.
+   * new pin. When the reply originated from a failure card (inspector-013)
+   * the caller MAY pass `failureSummary` / `failedTaskPath`; the service
+   * forwards both fields into the child batch's `parent.json` so the
+   * clarifier persona receives them via `modeArgs.parentContext`. Both
+   * failure fields are optional — omit them (or pass `undefined` / `null`)
+   * for ordinary replies.
    *
    * @param parentPinId - Identifier of the pin being replied to.
    * @param pin - New pin carrying the reply.
    * @param comment - Comment text attached to the reply pin.
+   * @param failureSummary - Summary of the failed parent task, or `null` /
+   *   `undefined` when the reply is not failure-scoped.
+   * @param failedTaskPath - Project-relative path of the failed parent
+   *   task directory, or `null` / `undefined` when the reply is not
+   *   failure-scoped.
    */
-  replyToPin(parentPinId: string, pin: Pin, comment: string): Promise<void>;
+  replyToPin(
+    parentPinId: string,
+    pin: Pin,
+    comment: string,
+    failureSummary?: string | null,
+    failedTaskPath?: string | null,
+  ): Promise<void>;
 
   /**
    * Look up a batch by identifier.

@@ -19,6 +19,10 @@ import { readYamlFile } from '../state.js';
 import { TaskQueue } from '../task-queue.js';
 import { TokenTracker } from '../token-tracker.js';
 import type { AssessmentResult } from '../types.js';
+import type {
+  FailureCategory,
+  InspectorServiceImpl,
+} from '../web-services/inspector-service.js';
 import { HealthCheckMonitor } from '../health-check.js';
 import { killProcess, readPidSync, pidFilePath } from '../process-utils.js';
 import { existsSync, renameSync, unlinkSync } from 'node:fs';
@@ -71,6 +75,39 @@ function extractFilePath(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const fp = (payload as Record<string, unknown>).file_path;
   return typeof fp === 'string' && fp.length > 0 ? fp : null;
+}
+
+/**
+ * Emit a `batch.failed` event on the inspector service when the failing
+ * task is inspector-sourced.
+ *
+ * Non-inspector task ids (any id that does not start with the literal
+ * prefix `inspector-`) and absent services are no-ops. Inspector task
+ * ids are also the batch id in v1 — the emitted payload's `batchId` and
+ * `taskId` fields carry the same value for forward compatibility.
+ *
+ * Exported for direct unit testing; runtime callers live in `runMainLoop`.
+ *
+ * @param service - Optional inspector service wired by the web-server layer.
+ * @param taskId - Identifier of the task that just transitioned to `failed`.
+ * @param projectDir - Absolute project root used to compute `taskPath`.
+ * @param category - Failure category discriminator recorded at the call site.
+ */
+export function dispatchFailureIfInspector(
+  service: InspectorServiceImpl | undefined,
+  taskId: string,
+  projectDir: string,
+  category: FailureCategory,
+): void {
+  if (service === undefined) return;
+  if (!taskId.startsWith('inspector-')) return;
+  const taskPath = join(projectDir, '.forjis', 'tasks', taskId);
+  service.emitBatchFailed({
+    batchId: taskId,
+    taskId,
+    taskPath,
+    category,
+  });
 }
 
 /** Shape of .forjis/config/tasks.yaml for queue construction. */
@@ -401,6 +438,10 @@ async function renderDryRun(
  * @param tracker - The live TokenTracker instance for recording usage.
  * @param healthCheckConfig - Health check configuration from resolved config.
  * @param webServer - Optional HTTP server to close on shutdown.
+ * @param inspectorService - Optional inspector service; when supplied,
+ *   inspector-sourced task failures are forwarded via
+ *   {@link dispatchFailureIfInspector}. CLI-only wiring leaves this
+ *   undefined and the helper becomes a no-op.
  */
 async function runMainLoop(
   engine: ForjisEngine,
@@ -414,6 +455,7 @@ async function runMainLoop(
   tokenBudgetConfig: TokenBudgetFile | null,
   workerState: WorkerStateRef,
   webServer?: Server,
+  inspectorService?: InspectorServiceImpl,
 ): Promise<void> {
   workerState.busy = 0;
   workerState.max = maxConcurrent;
@@ -431,6 +473,7 @@ async function runMainLoop(
         try { unlinkSync(pidPath); } catch { /* ignore */ }
       }
       await queue.transition(task.id, 'failed');
+      dispatchFailureIfInspector(inspectorService, task.id, options.projectDir, 'shutdown');
     }
     if (webServer) {
       webServer.close();
@@ -629,6 +672,12 @@ async function runMainLoop(
       const pipelineStatePath = join(options.projectDir, '.forjis', 'tasks', task.id, 'pipeline-state.yaml');
       if (!existsSync(pipelineStatePath)) {
         await queue.transition(task.id, 'failed');
+        dispatchFailureIfInspector(
+          inspectorService,
+          task.id,
+          options.projectDir,
+          'no-pipeline-state',
+        );
         console.error(`[queue]: task "${task.id}" -> failed: orchestrator returned without dispatching any role (no pipeline-state.yaml)`);
         return true;
       }
@@ -640,6 +689,12 @@ async function runMainLoop(
     } catch (err) {
       await syncRetryStateToPlan(options.projectDir, task.id, monitor.getAllRetryStates()).catch(() => {});
       await queue.transition(task.id, 'failed');
+      dispatchFailureIfInspector(
+        inspectorService,
+        task.id,
+        options.projectDir,
+        'engine-error',
+      );
       console.error(`[queue]: task "${task.id}" -> failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       monitor.stop();
