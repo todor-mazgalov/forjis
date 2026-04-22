@@ -60,6 +60,19 @@ interface ClientAwareInspectorService extends InspectorService {
  * every other `Error` → `session.error { code: "INTERNAL" }`. The pump
  * NEVER rethrows and NEVER calls `transport.broadcast`.
  *
+ * ## Per-client FIFO dispatch
+ *
+ * Frames from a single client are dispatched one-at-a-time in arrival order
+ * via a per-client promise chain held in a function-local map. This honours
+ * the in-order guarantee of the underlying TCP/WebSocket stream — downstream
+ * state transitions (e.g. a `pin.create` that lazily adopts a client-generated
+ * batch id, followed immediately by `batch.submit` for the same id) require
+ * the first frame's side effects to settle before the next frame dispatches.
+ * Frames from different `clientId`s run concurrently; there is no global lock.
+ * Per-frame errors are isolated — a rejection from one frame is caught and
+ * translated into a `session.error` frame without poisoning the chain tail,
+ * so the next frame for that client still dispatches normally.
+ *
  * @param transport - The {@link InspectorTransport} carrying inbound/outbound
  *   Inspector messages.
  * @param service - The {@link InspectorService} implementation that owns
@@ -69,13 +82,54 @@ export function wireInspectorMessagePump(
   transport: InspectorTransport,
   service: InspectorService,
 ): void {
-  transport.onMessage(async (clientId, msg) => {
-    try {
-      await dispatchInboundMessage(transport, service, clientId, msg);
-    } catch (err) {
-      sendErrorFrame(transport, clientId, err);
-    }
+  /** Tail of each client's in-flight dispatch chain, keyed by `clientId`. */
+  const dispatchChains = new Map<string, Promise<void>>();
+
+  transport.onMessage((clientId, msg) => {
+    const previousTail = dispatchChains.get(clientId) ?? Promise.resolve();
+    const nextTail = previousTail.then(() =>
+      dispatchIsolated(transport, service, clientId, msg),
+    );
+    dispatchChains.set(clientId, nextTail);
+    // Callers that treat the onMessage handler contract as synchronous (the
+    // production WebSocket transport) ignore this return value — it is returned
+    // solely so test transports that want to flush pending dispatch work can
+    // await the resulting tail. The `InspectorTransport.onMessage` signature
+    // still types the handler as `() => void`; the extra return is tolerated
+    // because TS `void`-returning callbacks may return any value.
+    return nextTail;
   });
+
+  transport.onDisconnect((clientId) => {
+    dispatchChains.delete(clientId);
+  });
+}
+
+/**
+ * Dispatch a single inbound frame with per-frame error isolation.
+ *
+ * Wraps {@link dispatchInboundMessage} in a try/catch so that a rejection for
+ * one frame translates into a `session.error` frame without rejecting the
+ * returned promise. Keeping the resolved promise as the stored chain tail
+ * guarantees that a failure on frame N does not poison frame N+1 for the
+ * same client.
+ *
+ * @param transport - Transport used to send outbound frames.
+ * @param service - Service that owns lifecycle state.
+ * @param clientId - Originating client identifier.
+ * @param msg - Inbound Inspector message.
+ */
+async function dispatchIsolated(
+  transport: InspectorTransport,
+  service: InspectorService,
+  clientId: string,
+  msg: InspectorMessage,
+): Promise<void> {
+  try {
+    await dispatchInboundMessage(transport, service, clientId, msg);
+  } catch (err) {
+    sendErrorFrame(transport, clientId, err);
+  }
 }
 
 /**
