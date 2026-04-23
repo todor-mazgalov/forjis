@@ -538,3 +538,122 @@ describe('composeRuntime — role outcomes forwarding', () => {
     expect(role!.outcomes).toEqual(['security']);
   });
 });
+
+// --------------------------------------------------------------------------
+// composeRuntime — visuals propagation
+// --------------------------------------------------------------------------
+
+describe('composeRuntime — visuals propagation', () => {
+  /**
+   * Builds a plugin with a single role carrying a single-entry visuals list.
+   */
+  function pluginWithVisuals(pluginName: string, roleName: string): PluginDef {
+    const yaml = [
+      `name: ${pluginName}`,
+      `version: 1.0.0`,
+      `orgs:`,
+      `  - name: product`,
+      `    teams:`,
+      `      - name: eng`,
+      `        roles:`,
+      `          - name: ${roleName}`,
+      `            agent: dev-agent`,
+      `            visuals:`,
+      `              - location: http://localhost:5173`,
+      `                command: npm run dev`,
+    ].join('\n');
+    return parsePlugin(yaml);
+  }
+
+  it('plugin role visuals flow to composed runtime unchanged', () => {
+    const plugin = pluginWithVisuals('software-dev', 'BackendDev');
+    const config = minimalBuildConfig({
+      orgs: [{ name: 'my-team', extends: 'software-dev:product', roles: [] }],
+    });
+    const registry = mockRegistryAlwaysResolves();
+
+    const runtime = composeRuntime(config, [plugin], registry);
+    const allRoles = runtime.orgs.flatMap(o => o.teams.flatMap(t => t.roles));
+    const role = allRoles.find(r => r.name === 'BackendDev');
+    expect(role!.visuals).toEqual([
+      { location: 'http://localhost:5173', command: 'npm run dev' },
+    ]);
+  });
+
+  it('user override without visuals preserves plugin visuals', () => {
+    const plugin = pluginWithVisuals('software-dev', 'BackendDev');
+    const config = minimalBuildConfig({
+      orgs: [
+        {
+          name: 'my-team',
+          extends: 'software-dev:product',
+          roles: [
+            {
+              name: 'MyBackend',
+              extends: 'software-dev:BackendDev',
+              skills: ['kotlin'],
+            },
+          ],
+        },
+      ],
+    });
+    const registry = mockRegistryAlwaysResolves();
+
+    const runtime = composeRuntime(config, [plugin], registry);
+    const allRoles = runtime.orgs.flatMap(o => o.teams.flatMap(t => t.roles));
+    const role = allRoles.find(r => r.name === 'MyBackend');
+    expect(role!.visuals).toEqual([
+      { location: 'http://localhost:5173', command: 'npm run dev' },
+    ]);
+  });
+
+  it('user override with visuals replaces plugin visuals wholesale', () => {
+    const plugin = pluginWithVisuals('software-dev', 'BackendDev');
+    const config = minimalBuildConfig({
+      orgs: [
+        {
+          name: 'my-team',
+          extends: 'software-dev:product',
+          roles: [
+            {
+              name: 'MyBackend',
+              extends: 'software-dev:BackendDev',
+              visuals: [{ location: 'https://override.example' }],
+            },
+          ],
+        },
+      ],
+    });
+    const registry = mockRegistryAlwaysResolves();
+
+    const runtime = composeRuntime(config, [plugin], registry);
+    const allRoles = runtime.orgs.flatMap(o => o.teams.flatMap(t => t.roles));
+    const role = allRoles.find(r => r.name === 'MyBackend');
+    expect(role!.visuals).toEqual([{ location: 'https://override.example' }]);
+  });
+
+  it('empty visuals override clears the plugin visuals list', () => {
+    const plugin = pluginWithVisuals('software-dev', 'BackendDev');
+    const config = minimalBuildConfig({
+      orgs: [
+        {
+          name: 'my-team',
+          extends: 'software-dev:product',
+          roles: [
+            {
+              name: 'MyBackend',
+              extends: 'software-dev:BackendDev',
+              visuals: [],
+            },
+          ],
+        },
+      ],
+    });
+    const registry = mockRegistryAlwaysResolves();
+
+    const runtime = composeRuntime(config, [plugin], registry);
+    const allRoles = runtime.orgs.flatMap(o => o.teams.flatMap(t => t.roles));
+    const role = allRoles.find(r => r.name === 'MyBackend');
+    expect(role!.visuals).toEqual([]);
+  });
+});

@@ -12,7 +12,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { loadBuildFile, parseBuildFile } from './build-file.js';
 import { readChecksumCache, writeChecksumCache } from './checksum-cache.js';
 import { writePluginLock } from './lock/plugin-lock.js';
-import { composeRuntime, loadPlugins, resolveTaskRuleIncludes } from './plugin-compositor.js';
+import { composeRuntime, loadPlugins, resolveTaskRuleIncludes, validateVisualsPaths } from './plugin-compositor.js';
 import { resolveRepositories } from './repo/index.js';
 import {
   writeConstraintsConfig,
@@ -64,6 +64,7 @@ export async function resolve(
   const pillarPaths = buildConfig.constraints?.pillars ?? [];
   const loadedPillars = await loadPillars(pillarPaths, projectDir);
   const config = composeRuntime(buildConfig, plugins, registry, loadedPillars);
+  await validateVisualsPaths(config.orgs, projectDir, (msg) => console.warn(msg));
   const resolvedTaskRules = resolveTaskRuleIncludes(buildConfig, plugins, config.orgs);
 
   const previousCache = await readChecksumCache(projectDir);

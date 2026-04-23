@@ -63,6 +63,30 @@ export interface RoleDef {
   hooks?: RoleHooks;
   /** References to named outcome groups that apply to this role (FR-027). */
   outcomes?: string[];
+  /** Optional declarative visual-context inputs (role-visuals capability). */
+  visuals?: VisualEntry[];
+}
+
+/**
+ * A single visuals entry declared on a role.
+ *
+ * `location` carries a URL-like scheme prefix (`http://`, `https://`,
+ * `file://`, `dir://`) that selects the handler at invocation time. All
+ * other fields are optional and are surfaced by the orchestrator's
+ * rendered "## Visuals" section when present.
+ */
+export interface VisualEntry {
+  /**
+   * Scheme-tagged target. Scheme MUST be one of exact lowercase `http`,
+   * `https`, `file`, `dir` followed by `://`.
+   */
+  location: string;
+  /** Optional shell command spawned by the facilitator if a `http(s)` probe fails. */
+  command?: string;
+  /** Optional capture-tool spec in the form `<name>@<path>`. Path is relative to projectDir. */
+  tool?: string;
+  /** Optional path (relative to projectDir) to a credentials file. Facilitator never reads contents. */
+  credentials?: string;
 }
 
 /** Hook configuration for a role, organized by execution phase. */
@@ -359,6 +383,8 @@ export interface PluginRoleDef {
   expertise?: string;
   /** References to named outcome groups that apply to this role (FR-027). */
   outcomes?: string[];
+  /** Optional declarative visual-context inputs (role-visuals capability). */
+  visuals?: VisualEntry[];
 }
 
 /** Pipeline defaults defined by a plugin. */
@@ -470,6 +496,8 @@ export interface RuntimeRole {
   expertise?: string;
   /** Outcome group names that apply to this role (FR-027). */
   outcomes?: string[];
+  /** Optional declarative visual-context inputs (role-visuals capability). */
+  visuals?: VisualEntry[];
 }
 
 /** Shape of outcome-config.yaml written by engine prepare(). */
