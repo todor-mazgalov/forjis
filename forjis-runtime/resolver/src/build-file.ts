@@ -33,6 +33,7 @@ import type {
   TasksConfig,
   TeamDef,
   TokenBudgetConfig,
+  VisualEntry,
 } from './types.js';
 
 /**
@@ -421,11 +422,285 @@ function validateRoles(
         errors.push(`${prefix}.roles[${j}].outcomes: must be an array of strings`);
       }
     }
+    if (role['visuals'] !== undefined) {
+      const visuals = validateVisuals(role['visuals'], `${prefix}.roles[${j}]`, errors);
+      if (visuals !== undefined) {
+        roleDef.visuals = visuals;
+      }
+    }
 
     result.push(roleDef);
   }
 
   return result;
+}
+
+/**
+ * Allowed lowercase schemes on a `VisualEntry.location`. Compared case
+ * sensitively — `FILE://` is rejected on purpose.
+ */
+const VISUAL_SCHEMES = ['http', 'https', 'file', 'dir'] as const;
+
+/**
+ * Regex matching the `tool` spec format on a `VisualEntry`.
+ *
+ * `<name>@<path>` where `<name>` is `[a-zA-Z0-9_-]+` and `<path>` is a
+ * non-empty string (captured as group 1 for potential future reuse).
+ */
+const TOOL_PATTERN = /^[a-zA-Z0-9_-]+@(.+)$/;
+
+/**
+ * Validates and parses the optional `visuals` list on a role.
+ *
+ * Returns `undefined` when the key is absent. When present and of an
+ * invalid outer shape, pushes an error and returns `undefined`. Empty
+ * arrays are accepted and returned verbatim so callers can distinguish
+ * "absent" from "empty" if needed (both behave identically downstream).
+ *
+ * Per-entry errors are accumulated in `errors` with an index-path prefix;
+ * malformed entries are dropped from the returned list so the accumulator
+ * sees every issue at once without throwing early.
+ *
+ * @param raw - Raw YAML value found under the role's `visuals` key.
+ * @param rolePrefix - Index-path prefix of the parent role (e.g.
+ *   `orgs[0].roles[2]`) used to disambiguate error messages.
+ * @param errors - Mutable error accumulator shared across the whole
+ *   `parseBuildFile` pass.
+ * @returns The parsed array, or `undefined` when the outer shape is
+ *   invalid.
+ */
+function validateVisuals(
+  raw: unknown,
+  rolePrefix: string,
+  errors: string[]
+): VisualEntry[] | undefined {
+  if (!Array.isArray(raw)) {
+    errors.push(`${rolePrefix}.visuals: must be an array`);
+    return undefined;
+  }
+
+  const result: VisualEntry[] = [];
+  for (let k = 0; k < raw.length; k++) {
+    const entry = validateVisualEntry(
+      raw[k],
+      `${rolePrefix}.visuals[${k}]`,
+      errors
+    );
+    if (entry !== null) {
+      result.push(entry);
+    }
+  }
+  return result;
+}
+
+/**
+ * Shape-validates a single `VisualEntry`.
+ *
+ * Checks that `location` is a non-empty string with a scheme in
+ * {@link VISUAL_SCHEMES}; that `command`, `tool`, and `credentials` are
+ * strings when present; that `tool` matches {@link TOOL_PATTERN}; and
+ * that `credentials` / `tool` install paths do not contain a raw `..`
+ * segment (NFR-08). Realpath containment of `credentials` is deferred
+ * to the resolver's post-compose pass because `projectDir` is not in
+ * scope of this module.
+ *
+ * @param entry - Raw YAML value for one entry.
+ * @param prefix - Index-path prefix naming the entry (e.g.
+ *   `orgs[0].roles[2].visuals[1]`).
+ * @param errors - Mutable error accumulator.
+ * @returns The validated entry, or `null` when any shape error was
+ *   recorded.
+ */
+function validateVisualEntry(
+  entry: unknown,
+  prefix: string,
+  errors: string[]
+): VisualEntry | null {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    errors.push(`${prefix}: must be an object`);
+    return null;
+  }
+
+  const raw = entry as Record<string, unknown>;
+  let valid = true;
+
+  const location = validateVisualLocation(raw['location'], prefix, errors);
+  if (location === null) {
+    valid = false;
+  }
+
+  const command = validateOptionalString(
+    raw['command'],
+    `${prefix}.command`,
+    errors
+  );
+  if (command === undefined && raw['command'] !== undefined) {
+    valid = false;
+  }
+
+  const tool = validateVisualTool(raw['tool'], prefix, errors);
+  if (tool === undefined && raw['tool'] !== undefined) {
+    valid = false;
+  }
+
+  const credentials = validateVisualCredentials(
+    raw['credentials'],
+    prefix,
+    errors
+  );
+  if (credentials === undefined && raw['credentials'] !== undefined) {
+    valid = false;
+  }
+
+  if (!valid || location === null) {
+    return null;
+  }
+
+  const result: VisualEntry = { location };
+  if (command !== undefined) result.command = command;
+  if (tool !== undefined) result.tool = tool;
+  if (credentials !== undefined) result.credentials = credentials;
+  return result;
+}
+
+/**
+ * Validates the required `location` field on a `VisualEntry`.
+ *
+ * @param raw - Raw value.
+ * @param prefix - Error-path prefix of the parent entry.
+ * @param errors - Mutable error accumulator.
+ * @returns The validated location string, or `null` when invalid.
+ */
+function validateVisualLocation(
+  raw: unknown,
+  prefix: string,
+  errors: string[]
+): string | null {
+  if (typeof raw !== 'string' || raw.length === 0) {
+    errors.push(`${prefix}.location: required non-empty string`);
+    return null;
+  }
+  const sepIdx = raw.indexOf('://');
+  if (sepIdx === -1) {
+    errors.push(
+      `${prefix}.location: invalid scheme — expected one of ${VISUAL_SCHEMES.join(', ')}`
+    );
+    return null;
+  }
+  const scheme = raw.slice(0, sepIdx);
+  if (!(VISUAL_SCHEMES as readonly string[]).includes(scheme)) {
+    errors.push(
+      `${prefix}.location: invalid scheme "${scheme}" — expected one of ${VISUAL_SCHEMES.join(', ')}`
+    );
+    return null;
+  }
+  return raw;
+}
+
+/**
+ * Validates an optional string field without additional constraints.
+ *
+ * Returns `undefined` when the field is absent. Emits an error and
+ * returns `undefined` when present but not a string.
+ */
+function validateOptionalString(
+  raw: unknown,
+  prefix: string,
+  errors: string[]
+): string | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'string') {
+    errors.push(`${prefix}: must be a string`);
+    return undefined;
+  }
+  return raw;
+}
+
+/**
+ * Validates the optional `tool` field on a `VisualEntry`.
+ *
+ * Requires `<name>@<path>` format per {@link TOOL_PATTERN}. The install
+ * path segment must not contain raw `..` segments (NFR-08 shape check).
+ *
+ * @param raw - Raw value.
+ * @param prefix - Error-path prefix of the parent entry.
+ * @param errors - Mutable error accumulator.
+ * @returns The validated tool spec verbatim, or `undefined` when absent
+ *   or invalid.
+ */
+function validateVisualTool(
+  raw: unknown,
+  prefix: string,
+  errors: string[]
+): string | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'string') {
+    errors.push(`${prefix}.tool: must be a string`);
+    return undefined;
+  }
+  const match = TOOL_PATTERN.exec(raw);
+  if (!match) {
+    errors.push(
+      `${prefix}.tool: malformed — expected "<name>@<path>" with a non-empty path`
+    );
+    return undefined;
+  }
+  if (containsDotDotSegment(match[1])) {
+    errors.push(
+      `${prefix}.tool: install path must not contain ".." segments`
+    );
+    return undefined;
+  }
+  return raw;
+}
+
+/**
+ * Validates the optional `credentials` field on a `VisualEntry`.
+ *
+ * Only shape-level checks happen here (string type, raw `..` rejection).
+ * Realpath containment is enforced by the post-compose pass in
+ * `plugin-compositor.ts::validateVisualsPaths` where `projectDir` is
+ * available.
+ *
+ * @param raw - Raw value.
+ * @param prefix - Error-path prefix of the parent entry.
+ * @param errors - Mutable error accumulator.
+ * @returns The validated path verbatim, or `undefined` when absent or
+ *   invalid.
+ */
+function validateVisualCredentials(
+  raw: unknown,
+  prefix: string,
+  errors: string[]
+): string | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'string' || raw.length === 0) {
+    errors.push(`${prefix}.credentials: must be a non-empty string`);
+    return undefined;
+  }
+  if (containsDotDotSegment(raw)) {
+    errors.push(
+      `${prefix}.credentials: must not contain ".." segments (escapes projectDir)`
+    );
+    return undefined;
+  }
+  return raw;
+}
+
+/**
+ * True when a path contains a raw `..` segment.
+ *
+ * Normalises backslashes to forward slashes first so Windows-style paths
+ * are caught consistently with POSIX-style paths. A segment matches when
+ * it equals the literal `..` — `.../foo/../bar`, `foo/..`, `../foo`, and
+ * `..` all return `true`; `..foo` and `foo..` do not.
+ *
+ * @param value - Path string to scan.
+ * @returns `true` when any segment equals `..`, otherwise `false`.
+ */
+function containsDotDotSegment(value: string): boolean {
+  const normalised = value.replace(/\\/g, '/');
+  return normalised.split('/').some((segment) => segment === '..');
 }
 
 /**

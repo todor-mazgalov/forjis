@@ -78,6 +78,7 @@ function buildOrgsData(ctx: WriterContext): Record<string, unknown> {
           outcomes: role.outcomes ?? [],
           ...(role.stage ? { stage: role.stage } : {}),
           ...(role.expertise ? { expertise: role.expertise } : {}),
+          ...(role.visuals && role.visuals.length > 0 ? { visuals: role.visuals } : {}),
         };
       }),
     })),

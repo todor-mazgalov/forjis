@@ -27,6 +27,8 @@ import { HealthCheckMonitor } from '../health-check.js';
 import { killProcess, readPidSync, pidFilePath } from '../process-utils.js';
 import { existsSync, renameSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { resolveRoleVisuals } from '../role-visuals/index.js';
+import { drainAll, release as releaseVisualsCommand } from '../role-visuals/command-runner.js';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { writePipelinePlan, syncPlanFromState, syncBranchesFromState, forcePlanReady, getRunningRole, syncRetryStateToPlan, parsePipelinePlan, PlanRoleNotFoundError } from '../web-services/plan-writer.js';
@@ -593,6 +595,20 @@ async function runMainLoop(
         /* ignore -- poll will catch up */
       }
 
+      // Resolve per-role visuals artefacts up front (once per task
+      // attempt). The orchestrator subprocess reads each file via
+      // `.forjis/tasks/<task-id>/visuals-<org>-<team>-<role>.yaml` at
+      // the moment it dispatches a role; pre-writing every artefact
+      // avoids IPC across the orchestrator boundary. Any command
+      // subprocesses spawned here are released after engine.invoke
+      // returns (success OR failure); the task-level `drainAll()` in
+      // the outer finally is the crash-safety backstop.
+      const acquiredVisualsKeys = await resolveVisualsForRoles(
+        options.projectDir,
+        task.id,
+        configResult.runtimeConfig.orgs,
+      );
+
       let engineResult: import('../engine.js').EngineResult;
       try {
         engineResult = await invokeWithHealthCheck(
@@ -631,6 +647,15 @@ async function runMainLoop(
           throw planParseError;
         }
         throw err;
+      } finally {
+        // Release every refcount hold acquired during the per-role
+        // visuals resolution, whether the engine completed cleanly or
+        // crashed. Each `release` is idempotent.
+        for (const key of acquiredVisualsKeys) {
+          await releaseVisualsCommand(key).catch(() => {
+            /* swallow — task-level drainAll is the backstop */
+          });
+        }
       }
 
       // Engine returned cleanly — but the final interval tick (or an earlier
@@ -699,6 +724,12 @@ async function runMainLoop(
     } finally {
       monitor.stop();
       if (statePollTimer) clearInterval(statePollTimer);
+      // Task-level crash-safety: drain any role-visuals subprocess
+      // that outlived its per-role release (e.g. if the orchestrator
+      // crashed before the release block ran).
+      await drainAll().catch(() => {
+        /* best-effort teardown */
+      });
       workerState.busy--;
     }
 
@@ -827,6 +858,57 @@ async function invokeWithHealthCheck(
   }
 
   throw new Error(`[health-check]: task "${task.id}" exceeded loop backstop of ${maxRetries} retries`);
+}
+
+/**
+ * Walks every role in the composed orgs tree and calls
+ * `resolveRoleVisuals` for those with a non-empty `visuals` list.
+ *
+ * Each call writes the role's visuals artefact to
+ * `.forjis/tasks/<taskId>/visuals-<org>-<team>-<role>.yaml` and may
+ * acquire one or more refcounted subprocess handles. The concatenated
+ * `acquiredKeys` are returned so the caller can release them after
+ * `engine.invoke` completes.
+ *
+ * Roles without visuals are silently skipped (FR-19) — no artefact,
+ * no log line, no subprocess. Any error thrown during the per-role
+ * resolution is caught and logged as a warning so one misconfigured
+ * role cannot block invocation of the rest (FR-20 best-effort).
+ *
+ * @param projectDir - Absolute project root.
+ * @param taskId - Identifier of the current task.
+ * @param orgs - Composed runtime orgs tree from the resolver.
+ * @returns Refcount keys to release after invocation ends.
+ */
+async function resolveVisualsForRoles(
+  projectDir: string,
+  taskId: string,
+  orgs: ConfigResult['runtimeConfig']['orgs'],
+): Promise<string[]> {
+  const keys: string[] = [];
+  for (const org of orgs) {
+    for (const team of org.teams) {
+      for (const role of team.roles) {
+        if (!role.visuals || role.visuals.length === 0) continue;
+        try {
+          const result = await resolveRoleVisuals({
+            role,
+            taskId,
+            projectDir,
+          });
+          keys.push(...result.acquiredKeys);
+        } catch (err) {
+          // FR-20 best-effort: a single misconfigured role must not
+          // block the rest. Surface the failure as a warning so the
+          // operator still sees it.
+          console.warn(
+            `[role-visuals]: failed to prepare "${role.org}:${role.team}:${role.name}" — ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    }
+  }
+  return keys;
 }
 
 /** Threshold fraction at which the budget gate triggers. */

@@ -6,7 +6,9 @@
  * overrides, and produces a unified RuntimeConfig for engine delegation.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
+import { isAbsolute, resolve as resolvePath, sep as pathSep } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
 import type { ResourceRegistry } from './repo/index.js';
 
@@ -42,6 +44,7 @@ import type {
   TaskRuleIncludeRef,
   TaskRuleMatchers,
   TeamDef,
+  VisualEntry,
 } from './types.js';
 
 /** Result of loadPlugins: parsed plugin definitions alongside their raw file content. */
@@ -378,6 +381,7 @@ function parsePluginRoles(
     const stage = typeof role['stage'] === 'string' ? role['stage'] : undefined;
     const expertise = typeof role['expertise'] === 'string' ? role['expertise'] : undefined;
     const outcomes = Array.isArray(role['outcomes']) ? role['outcomes'].map(String) : undefined;
+    const visuals = parsePluginVisuals(role['visuals'], pluginName, prefix);
 
     return {
       name: role['name'],
@@ -387,8 +391,200 @@ function parsePluginRoles(
       stage,
       expertise,
       ...(outcomes ? { outcomes } : {}),
+      ...(visuals ? { visuals } : {}),
     };
   });
+}
+
+/** Allowed lowercase schemes on a `VisualEntry.location` (plugin-side). */
+const PLUGIN_VISUAL_SCHEMES = ['http', 'https', 'file', 'dir'] as const;
+
+/** Tool spec pattern mirrored from build-file.ts for plugin-side parsing. */
+const PLUGIN_TOOL_PATTERN = /^[a-zA-Z0-9_-]+@(.+)$/;
+
+/**
+ * Parses the optional `visuals` list on a plugin-defined role.
+ *
+ * Plugin parsing uses throw-on-first-error semantics via
+ * `PluginValidationError`, matching the surrounding plugin validators.
+ * Returns `undefined` when the key is absent so callers can conditionally
+ * spread the field into the constructed object.
+ *
+ * @param raw - Raw YAML value under the role's `visuals` key.
+ * @param pluginName - Name of the enclosing plugin (for error messages).
+ * @param rolePrefix - Role-level path prefix (e.g.
+ *   `orgs[0].teams[0].roles[0]`) used to build index-path error strings.
+ * @returns Parsed entries, or `undefined` when the key is absent.
+ * @throws {PluginValidationError} On any shape violation.
+ */
+function parsePluginVisuals(
+  raw: unknown,
+  pluginName: string,
+  rolePrefix: string
+): VisualEntry[] | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (!Array.isArray(raw)) {
+    throw new PluginValidationError(
+      pluginName,
+      `${rolePrefix}.visuals: must be an array`
+    );
+  }
+
+  return raw.map((entry, k) =>
+    parsePluginVisualEntry(entry, pluginName, `${rolePrefix}.visuals[${k}]`)
+  );
+}
+
+/**
+ * Parses a single plugin `VisualEntry` with throw-on-first-error semantics.
+ *
+ * @param entry - Raw YAML value for one entry.
+ * @param pluginName - Enclosing plugin name (for error messages).
+ * @param prefix - Full index-path of this entry (e.g.
+ *   `orgs[0].teams[0].roles[0].visuals[1]`).
+ * @returns The validated entry.
+ * @throws {PluginValidationError} On any shape violation.
+ */
+function parsePluginVisualEntry(
+  entry: unknown,
+  pluginName: string,
+  prefix: string
+): VisualEntry {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new PluginValidationError(pluginName, `${prefix}: must be an object`);
+  }
+  const raw = entry as Record<string, unknown>;
+
+  if (typeof raw['location'] !== 'string' || raw['location'].length === 0) {
+    throw new PluginValidationError(
+      pluginName,
+      `${prefix}.location: required non-empty string`
+    );
+  }
+  const location = raw['location'];
+  assertPluginVisualScheme(location, pluginName, prefix);
+
+  const result: VisualEntry = { location };
+
+  if (raw['command'] !== undefined) {
+    if (typeof raw['command'] !== 'string') {
+      throw new PluginValidationError(
+        pluginName,
+        `${prefix}.command: must be a string`
+      );
+    }
+    result.command = raw['command'];
+  }
+
+  if (raw['tool'] !== undefined) {
+    result.tool = parsePluginVisualTool(raw['tool'], pluginName, prefix);
+  }
+
+  if (raw['credentials'] !== undefined) {
+    result.credentials = parsePluginVisualCredentials(
+      raw['credentials'],
+      pluginName,
+      prefix
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Asserts the scheme prefix of a plugin visual `location` is in the
+ * allowlist.
+ */
+function assertPluginVisualScheme(
+  location: string,
+  pluginName: string,
+  prefix: string
+): void {
+  const sepIdx = location.indexOf('://');
+  if (sepIdx === -1) {
+    throw new PluginValidationError(
+      pluginName,
+      `${prefix}.location: invalid scheme — expected one of ${PLUGIN_VISUAL_SCHEMES.join(', ')}`
+    );
+  }
+  const scheme = location.slice(0, sepIdx);
+  if (!(PLUGIN_VISUAL_SCHEMES as readonly string[]).includes(scheme)) {
+    throw new PluginValidationError(
+      pluginName,
+      `${prefix}.location: invalid scheme "${scheme}" — expected one of ${PLUGIN_VISUAL_SCHEMES.join(', ')}`
+    );
+  }
+}
+
+/** Validates a plugin-side `tool` spec per {@link PLUGIN_TOOL_PATTERN}. */
+function parsePluginVisualTool(
+  raw: unknown,
+  pluginName: string,
+  prefix: string
+): string {
+  if (typeof raw !== 'string') {
+    throw new PluginValidationError(pluginName, `${prefix}.tool: must be a string`);
+  }
+  const match = PLUGIN_TOOL_PATTERN.exec(raw);
+  if (!match) {
+    throw new PluginValidationError(
+      pluginName,
+      `${prefix}.tool: malformed — expected "<name>@<path>" with a non-empty path`
+    );
+  }
+  if (hasDotDotSegment(match[1])) {
+    throw new PluginValidationError(
+      pluginName,
+      `${prefix}.tool: install path must not contain ".." segments`
+    );
+  }
+  return raw;
+}
+
+/** Validates a plugin-side `credentials` path with raw `..` rejection. */
+function parsePluginVisualCredentials(
+  raw: unknown,
+  pluginName: string,
+  prefix: string
+): string {
+  if (typeof raw !== 'string' || raw.length === 0) {
+    throw new PluginValidationError(
+      pluginName,
+      `${prefix}.credentials: must be a non-empty string`
+    );
+  }
+  if (hasDotDotSegment(raw)) {
+    throw new PluginValidationError(
+      pluginName,
+      `${prefix}.credentials: must not contain ".." segments (escapes projectDir)`
+    );
+  }
+  return raw;
+}
+
+/**
+ * Returns `true` when any `/`-delimited segment of `value` equals the
+ * literal `..`. Normalises backslashes to forward slashes first so
+ * Windows-style paths behave identically.
+ */
+function hasDotDotSegment(value: string): boolean {
+  const normalised = value.replace(/\\/g, '/');
+  return normalised.split('/').some((segment) => segment === '..');
+}
+
+/**
+ * Shallow-clones every `VisualEntry` in a list so the composed runtime
+ * tree does not share references with plugin-owned data. Entries are
+ * flat objects (no nested arrays or objects), so spreading each entry is
+ * sufficient — no deeper recursion required.
+ *
+ * @param visuals - Source list, assumed already shape-valid.
+ * @returns A new array of freshly spread entries.
+ */
+function deepCopyVisuals(visuals: VisualEntry[]): VisualEntry[] {
+  return visuals.map((entry) => ({ ...entry }));
 }
 
 /** Parses the pipeline block from a plugin. */
@@ -644,6 +840,7 @@ function mergePluginOrgs(plugins: PluginDef[]): RuntimeOrg[] {
           ...(role.stage ? { stage: role.stage } : {}),
           ...(role.expertise ? { expertise: role.expertise } : {}),
           ...(role.outcomes ? { outcomes: [...role.outcomes] } : {}),
+          ...(role.visuals ? { visuals: deepCopyVisuals(role.visuals) } : {}),
         })),
       }));
 
@@ -791,6 +988,7 @@ function deepCopyTeam(team: RuntimeTeam): RuntimeTeam {
       ...(role.stage ? { stage: role.stage } : {}),
       ...(role.expertise ? { expertise: role.expertise } : {}),
       ...(role.outcomes ? { outcomes: [...role.outcomes] } : {}),
+      ...(role.visuals ? { visuals: deepCopyVisuals(role.visuals) } : {}),
     })),
   };
 }
@@ -811,6 +1009,7 @@ function applyUserTeamRoles(
       const idx = team.roles.findIndex(r => r.name === userRole.extends);
       if (idx !== -1) {
         const base = team.roles[idx];
+        const mergedVisuals = resolveOverriddenVisuals(userRole, base);
         team.roles[idx] = {
           name: userRole.name,
           ...(base.plugin ? { plugin: base.plugin } : {}),
@@ -822,6 +1021,7 @@ function applyUserTeamRoles(
           ...(base.stage ? { stage: base.stage } : {}),
           ...(base.expertise ? { expertise: base.expertise } : {}),
           outcomes: userRole.outcomes ?? base.outcomes,
+          ...(mergedVisuals ? { visuals: mergedVisuals } : {}),
         };
       } else {
         const newRole = buildExtendedRole(userRole, plugins);
@@ -831,6 +1031,7 @@ function applyUserTeamRoles(
       const idx = team.roles.findIndex(r => unscopedName(r.name) === userRole.name);
       if (idx !== -1) {
         const base = team.roles[idx];
+        const mergedVisuals = resolveOverriddenVisuals(userRole, base);
         team.roles[idx] = {
           name: base.name,
           ...(base.plugin ? { plugin: base.plugin } : {}),
@@ -842,6 +1043,7 @@ function applyUserTeamRoles(
           ...(base.stage ? { stage: base.stage } : {}),
           ...(base.expertise ? { expertise: base.expertise } : {}),
           outcomes: userRole.outcomes ?? base.outcomes,
+          ...(mergedVisuals ? { visuals: mergedVisuals } : {}),
         };
       } else {
         const newRole = buildUserRole(userRole, plugins, `team:${team.name}:${userRole.name}`);
@@ -849,6 +1051,38 @@ function applyUserTeamRoles(
       }
     }
   }
+}
+
+/**
+ * Computes the effective `visuals` list for an override site.
+ *
+ * Semantics (FR-06):
+ *   - When the user role declares `visuals`, it replaces the base list
+ *     wholesale (no per-entry merge).
+ *   - When the user role does not declare `visuals`, the base plugin
+ *     list is preserved (deep-copied so later mutation cannot bleed
+ *     across roles).
+ *   - When neither side declares `visuals`, returns `undefined` so
+ *     callers can omit the key entirely via conditional spread.
+ *
+ * @param userRole - User-side role definition carrying the optional
+ *   override.
+ * @param base - Base role (plugin-derived) whose `visuals` are inherited
+ *   when the user did not redeclare them.
+ * @returns The effective list, or `undefined` when both sides omit the
+ *   key.
+ */
+function resolveOverriddenVisuals(
+  userRole: RoleDef,
+  base: { visuals?: VisualEntry[] }
+): VisualEntry[] | undefined {
+  if (userRole.visuals !== undefined) {
+    return deepCopyVisuals(userRole.visuals);
+  }
+  if (base.visuals) {
+    return deepCopyVisuals(base.visuals);
+  }
+  return undefined;
 }
 
 /** Finds a plugin org by "pluginName:orgName" reference. */
@@ -883,6 +1117,7 @@ function deepCopyOrg(org: RuntimeOrg): RuntimeOrg {
         ...(role.stage ? { stage: role.stage } : {}),
         ...(role.expertise ? { expertise: role.expertise } : {}),
         ...(role.outcomes ? { outcomes: [...role.outcomes] } : {}),
+        ...(role.visuals ? { visuals: deepCopyVisuals(role.visuals) } : {}),
       })),
     })),
   };
@@ -924,6 +1159,7 @@ function findAndOverrideRole(
     const idx = team.roles.findIndex(r => r.name === userRole.extends);
     if (idx !== -1) {
       const base = team.roles[idx];
+      const mergedVisuals = resolveOverriddenVisuals(userRole, base);
       team.roles[idx] = {
         name: userRole.name,
         ...(base.plugin ? { plugin: base.plugin } : {}),
@@ -935,6 +1171,7 @@ function findAndOverrideRole(
         ...(base.stage ? { stage: base.stage } : {}),
         ...(base.expertise ? { expertise: base.expertise } : {}),
         outcomes: userRole.outcomes ?? base.outcomes,
+        ...(mergedVisuals ? { visuals: mergedVisuals } : {}),
       };
       return true;
     }
@@ -953,6 +1190,7 @@ function findAndOverrideRoleByName(
     const idx = team.roles.findIndex(r => unscopedName(r.name) === userRole.name);
     if (idx !== -1) {
       const base = team.roles[idx];
+      const mergedVisuals = resolveOverriddenVisuals(userRole, base);
       team.roles[idx] = {
         name: base.name,
         ...(base.plugin ? { plugin: base.plugin } : {}),
@@ -964,6 +1202,7 @@ function findAndOverrideRoleByName(
         ...(base.stage ? { stage: base.stage } : {}),
         ...(base.expertise ? { expertise: base.expertise } : {}),
         outcomes: userRole.outcomes ?? base.outcomes,
+        ...(mergedVisuals ? { visuals: mergedVisuals } : {}),
       };
       return true;
     }
@@ -995,6 +1234,7 @@ function buildExtendedRole(
   const colonIdx = userRole.extends!.indexOf(':');
   const pluginName = colonIdx === -1 ? undefined : userRole.extends!.substring(0, colonIdx);
 
+  const mergedVisuals = resolveOverriddenVisuals(userRole, base);
   return {
     name: userRole.name,
     ...(pluginName ? { plugin: pluginName } : {}),
@@ -1008,6 +1248,7 @@ function buildExtendedRole(
     ...(base.stage ? { stage: base.stage } : {}),
     ...(base.expertise ? { expertise: base.expertise } : {}),
     outcomes: userRole.outcomes ?? (base.outcomes ? [...base.outcomes] : undefined),
+    ...(mergedVisuals ? { visuals: mergedVisuals } : {}),
   };
 }
 
@@ -1037,6 +1278,7 @@ function buildUserRole(
     skills: userRole.skills ?? [],
     hooks: userRole.hooks ?? { pre: [], validation: [], post: [] },
     ...(userRole.outcomes ? { outcomes: userRole.outcomes } : {}),
+    ...(userRole.visuals ? { visuals: deepCopyVisuals(userRole.visuals) } : {}),
   };
 }
 
@@ -1716,4 +1958,297 @@ function safeCompileSentinelProbe(rule: ResolvedTaskRule, pattern: string): RegE
       `tasks.rules.include: rule "${rule.plugin}:${rule.name}" has an invalid task_title regex "${pattern}": ${msg}`
     );
   }
+}
+
+// -- Role-visuals post-compose validation -----------------------------------
+
+/**
+ * Log-message prefix used by every visuals-related warning so downstream
+ * tooling can filter or stylise the category.
+ */
+const VISUALS_WARN_PREFIX = '[role-visuals]:';
+
+/**
+ * Post-compose validation pass over every role's `visuals` list.
+ *
+ * Runs after `composeRuntime` so every role has its final identity triple
+ * (`org`, `team`, `name`) and composed `visuals`. Performs the following
+ * checks, accumulating warnings through `warn` and throwing a
+ * `ResolverError` on the first hard escape:
+ *
+ *   1. `credentials` path — shape-reject raw `..` segments (NFR-08),
+ *      verify `resolve(projectDir, path)` is inside `projectDir`, and
+ *      re-verify containment via `realpath()` when the file exists at
+ *      validate time. Escapes raise `ResolverError`. When the file is
+ *      present and tracked by git, emit a warning suggesting it be
+ *      `.gitignore`d; failures of `git ls-files` (missing git binary,
+ *      non-git project, file untracked) are silent (FR-05).
+ *   2. `location` for `file://` / `dir://` — shape-reject raw `..`
+ *      segments and lexical escape via `startsWith(projectDir + sep)`.
+ *      No realpath here: globs may target yet-to-be-created files.
+ *   3. `tool` install path — shape-reject raw `..` segments and lexical
+ *      escape of the path segment after `@`.
+ *
+ * @param orgs - Fully composed runtime orgs tree.
+ * @param projectDir - Absolute project root; all visuals paths resolve
+ *   inside this directory.
+ * @param warn - Sink invoked once per warning message.
+ * @throws {ResolverError} When any path escapes `projectDir`.
+ */
+export async function validateVisualsPaths(
+  orgs: RuntimeOrg[],
+  projectDir: string,
+  warn: (msg: string) => void
+): Promise<void> {
+  const absProjectDir = resolvePath(projectDir);
+  let realProjectDir: string;
+  try {
+    realProjectDir = await realpath(absProjectDir);
+  } catch {
+    // projectDir itself should always exist; if realpath fails we fall
+    // back to the lexical root so the containment check still runs.
+    realProjectDir = absProjectDir;
+  }
+
+  for (const org of orgs) {
+    for (const team of org.teams) {
+      for (const role of team.roles) {
+        if (!role.visuals || role.visuals.length === 0) continue;
+        await validateRoleVisualsPaths(
+          role,
+          role.visuals,
+          { absProjectDir, realProjectDir, projectDir },
+          warn
+        );
+      }
+    }
+  }
+}
+
+/** Internal bundle of project-dir paths precomputed once per pass. */
+interface ProjectDirContext {
+  absProjectDir: string;
+  realProjectDir: string;
+  projectDir: string;
+}
+
+/**
+ * Validates every entry on a single role's visuals list.
+ *
+ * @param role - The role being walked (only identity fields are read).
+ * @param visuals - The role's visuals list.
+ * @param ctx - Precomputed project-dir paths.
+ * @param warn - Warning sink.
+ */
+async function validateRoleVisualsPaths(
+  role: RuntimeRole,
+  visuals: VisualEntry[],
+  ctx: ProjectDirContext,
+  warn: (msg: string) => void
+): Promise<void> {
+  const roleTriple = `${role.org}:${role.team}:${role.name}`;
+  for (let k = 0; k < visuals.length; k++) {
+    const entry = visuals[k];
+    const prefix = `orgs[${ctx.absProjectDir ? '' : ''}].roles.visuals[${k}]`;
+    await validateVisualEntryPaths(entry, role, k, roleTriple, ctx, warn, prefix);
+  }
+}
+
+/**
+ * Validates `credentials`, `location` (when `file://` / `dir://`), and
+ * `tool` install paths on one `VisualEntry`.
+ */
+async function validateVisualEntryPaths(
+  entry: VisualEntry,
+  role: RuntimeRole,
+  entryIndex: number,
+  roleTriple: string,
+  ctx: ProjectDirContext,
+  warn: (msg: string) => void,
+  _prefix: string
+): Promise<void> {
+  const errorPath = `orgs."${role.org}".teams."${role.team}".roles."${role.name}".visuals[${entryIndex}]`;
+
+  if (entry.credentials !== undefined) {
+    await assertCredentialsContained(entry.credentials, errorPath, ctx);
+    probeGitTracked(entry.credentials, roleTriple, ctx, warn);
+  }
+
+  const scheme = extractScheme(entry.location);
+  if (scheme === 'file' || scheme === 'dir') {
+    const relPath = entry.location.slice(scheme.length + '://'.length);
+    assertLocationContainedLexically(relPath, scheme, errorPath, ctx);
+  }
+
+  if (entry.tool !== undefined) {
+    assertToolPathContainedLexically(entry.tool, errorPath, ctx);
+  }
+}
+
+/**
+ * Asserts a `credentials` path stays inside `projectDir`.
+ *
+ * Three-layer check (NFR-08):
+ *   1. Raw `..` segment rejection.
+ *   2. Lexical `startsWith(projectDir + sep)` on the resolved absolute
+ *      path (rejects absolute paths that land outside the root).
+ *   3. Realpath re-check when the file exists (catches symlink escapes).
+ *      Missing file is OK — the post-compose pass may run before the
+ *      credentials file is created.
+ *
+ * @throws {ResolverError} When any check fails.
+ */
+async function assertCredentialsContained(
+  credentials: string,
+  errorPath: string,
+  ctx: ProjectDirContext
+): Promise<void> {
+  if (hasDotDotSegment(credentials)) {
+    throw new ResolverError(
+      `${errorPath}.credentials: escapes projectDir (".." segment)`
+    );
+  }
+
+  const absCandidate = isAbsolute(credentials)
+    ? resolvePath(credentials)
+    : resolvePath(ctx.absProjectDir, credentials);
+  if (!isLexicallyInside(absCandidate, ctx.absProjectDir)) {
+    throw new ResolverError(
+      `${errorPath}.credentials: escapes projectDir ("${credentials}")`
+    );
+  }
+
+  try {
+    const real = await realpath(absCandidate);
+    if (!isLexicallyInside(real, ctx.realProjectDir)) {
+      throw new ResolverError(
+        `${errorPath}.credentials: escapes projectDir via symlink ("${credentials}")`
+      );
+    }
+  } catch (err) {
+    if (err instanceof ResolverError) throw err;
+    // ENOENT (file not yet created) is acceptable here — lexical check above
+    // already blocks the escape surface. Other realpath errors (EACCES, etc.)
+    // are similarly treated as "defer to invocation time".
+  }
+}
+
+/**
+ * Emits a warning when a `credentials` file is tracked by git.
+ *
+ * Silent on every non-zero exit of `git ls-files --error-unmatch`
+ * (untracked file, non-git project, missing git binary). Exit 0 is the
+ * only warning trigger.
+ */
+function probeGitTracked(
+  credentials: string,
+  roleTriple: string,
+  ctx: ProjectDirContext,
+  warn: (msg: string) => void
+): void {
+  try {
+    const result = spawnSync(
+      'git',
+      ['ls-files', '--error-unmatch', credentials],
+      { cwd: ctx.absProjectDir, stdio: 'pipe' }
+    );
+    if (result.status === 0) {
+      warn(
+        `${VISUALS_WARN_PREFIX} credentials file "${credentials}" on role "${roleTriple}" is tracked by git — consider adding to .gitignore`
+      );
+    }
+  } catch {
+    /* Missing git binary → silent per FR-05. */
+  }
+}
+
+/**
+ * Asserts a `file://` / `dir://` relative path stays inside `projectDir`
+ * at the lexical layer. Realpath is not run here because glob patterns
+ * may contain wildcards and target files that don't yet exist.
+ */
+function assertLocationContainedLexically(
+  relPath: string,
+  scheme: string,
+  errorPath: string,
+  ctx: ProjectDirContext
+): void {
+  if (hasDotDotSegment(relPath)) {
+    throw new ResolverError(
+      `${errorPath}.location: "${scheme}://${relPath}" escapes projectDir (".." segment)`
+    );
+  }
+  const abs = isAbsolute(relPath)
+    ? resolvePath(relPath)
+    : resolvePath(ctx.absProjectDir, relPath);
+  // Strip any glob-wildcard tail (`*`, `?`, `[`) before the containment
+  // check so a legitimate pattern like `design/*.png` resolves to the
+  // containing directory rather than a literal filename with wildcards.
+  const wildcardIdx = indexOfWildcard(abs);
+  const containmentTarget = wildcardIdx === -1 ? abs : abs.slice(0, wildcardIdx);
+  if (!isLexicallyInside(containmentTarget, ctx.absProjectDir)) {
+    throw new ResolverError(
+      `${errorPath}.location: "${scheme}://${relPath}" escapes projectDir`
+    );
+  }
+}
+
+/**
+ * Returns the byte offset of the first glob wildcard in `value`, or -1
+ * when no wildcard is present. Used by the containment check to avoid
+ * resolving paths that include `*` / `?` / `[` as literal characters.
+ */
+function indexOfWildcard(value: string): number {
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === '*' || ch === '?' || ch === '[') return i;
+  }
+  return -1;
+}
+
+/**
+ * Asserts a `tool` install path stays inside `projectDir` at the lexical
+ * layer. The tool name before `@` is ignored; only the path after `@` is
+ * validated (the tool binary itself may live anywhere on PATH — the
+ * project-relative path is a capture-tool workdir, not an executable).
+ */
+function assertToolPathContainedLexically(
+  tool: string,
+  errorPath: string,
+  ctx: ProjectDirContext
+): void {
+  const atIdx = tool.indexOf('@');
+  const installPath = atIdx === -1 ? tool : tool.slice(atIdx + 1);
+  if (hasDotDotSegment(installPath)) {
+    throw new ResolverError(
+      `${errorPath}.tool: install path "${installPath}" escapes projectDir (".." segment)`
+    );
+  }
+  const abs = isAbsolute(installPath)
+    ? resolvePath(installPath)
+    : resolvePath(ctx.absProjectDir, installPath);
+  if (!isLexicallyInside(abs, ctx.absProjectDir)) {
+    throw new ResolverError(
+      `${errorPath}.tool: install path "${installPath}" escapes projectDir`
+    );
+  }
+}
+
+/**
+ * Extracts the scheme prefix (before `://`) from a location string, or
+ * the whole string when no `://` marker is present.
+ */
+function extractScheme(location: string): string {
+  const idx = location.indexOf('://');
+  return idx === -1 ? location : location.slice(0, idx);
+}
+
+/**
+ * Returns `true` when `candidate` is equal to `root` or sits below it
+ * lexically. Compares absolute paths only; caller is responsible for
+ * resolving and normalising before calling.
+ */
+function isLexicallyInside(candidate: string, root: string): boolean {
+  if (candidate === root) return true;
+  return candidate.startsWith(root + pathSep);
 }
