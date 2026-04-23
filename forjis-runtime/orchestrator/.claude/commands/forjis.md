@@ -14,9 +14,9 @@ parse arguments, detect the execution mode, and delegate to the appropriate mode
 
 **Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
-## Pre-flight — pid self-check
+## Pre-flight — do not police your own lifecycle
 
-The facilitator flips `state.yaml` to `status: running` and writes your own pid into `<task>/pid` BEFORE spawning you. On a fresh start both signals point at you, not at another instance. Run `echo $$` and compare to `<task>/pid`. Halt as "another pipeline running" ONLY when the pid is alive AND `!= $$`. Never halt based on `state.yaml: running` alone.
+The facilitator owns orchestrator lifecycle. `state.yaml: running` and a live pid in `<task>/pid` are both managed by the facilitator — DO NOT halt based on them. The facilitator writes `<task>/pid` immediately AFTER spawning you, so there is an unavoidable window where that file still holds a prior pid; reading it and comparing to `$$` is racy and produces false halts. Trust the facilitator: if you were spawned, you are the intended orchestrator. Proceed into Step 1.
 
 ## Logging Protocol
 

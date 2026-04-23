@@ -27,7 +27,7 @@ full protocol. Everything in ORG MODE applies here unless overridden below.
 
 **Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
-**Pid self-check first.** `state.yaml: running` + live `<task>/pid` on a fresh start point at you. Halt as "another pipeline running" ONLY if the pid is alive AND `!= $$`.
+**Do not police your own lifecycle.** The facilitator manages `state.yaml` and `<task>/pid`; do NOT halt based on them. If you were spawned, proceed.
 
 ## Context Variables
 
