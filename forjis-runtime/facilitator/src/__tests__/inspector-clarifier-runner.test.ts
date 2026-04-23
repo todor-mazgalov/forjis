@@ -959,3 +959,193 @@ describe('InspectorClarifierRunner — ingestEngineEvent observes every event ty
     }
   });
 });
+
+describe('InspectorClarifierRunner — prose + JSON envelopes (inspector-021)', () => {
+  /**
+   * Inspector 021 makes the runner tolerant of a single assistant
+   * turn that mixes prose with one or more JSON envelopes. The four
+   * tests below exercise the four branches the runner can take:
+   *
+   * - prose + finalize → finalize fires, task dir materialises.
+   * - prose + question + noise → question fires, noise ignored.
+   * - prose with no braces → `prose-only turn ignored` warning.
+   * - prose with an unclosed brace → legacy `dropping malformed`
+   *   warning (regression guard).
+   */
+
+  it('parses a finalize envelope preceded by prose', async () => {
+    const h = await buildHarness();
+    try {
+      const batchId = 'batch-prose-finalize';
+      const batch = await seedBatch(h, batchId, 1);
+      h.service.emit('batch.submitted', { batch });
+      await waitFor(() => h.engine.invocations.length === 1);
+
+      const invocation = h.engine.invocations[0];
+      const envelope = JSON.stringify({
+        type: 'finalize',
+        taskDir: 'tasks/inspector-prose-finalize',
+        taskMd: '# Inspector prose finalize\n\nBody.\n',
+        metadata: {
+          source: 'inspector',
+          batchId,
+          parentBatchId: null,
+          platform: 'web',
+          screens: ['home'],
+          pinCount: 1,
+          protocolVersion: 'forjis-inspector/1.0',
+        },
+      });
+      invocation.onEvent?.({
+        timestamp: new Date().toISOString(),
+        type: 'assistant',
+        role: 'orchestrator',
+        content: `[THINK] The intent is clear. ${envelope}`,
+        payload: `The intent is clear. ${envelope}`,
+      });
+
+      await waitFor(() => h.runner.activeRunCount() === 0);
+
+      const taskMd = await readFile(
+        join(h.projectDir, 'tasks/inspector-prose-finalize/TASK.md'),
+        'utf-8',
+      );
+      expect(taskMd).toContain('Inspector prose finalize');
+    } finally {
+      await cleanup(h);
+    }
+  });
+
+  it('dispatches the first question and silently ignores trailing noise', async () => {
+    const h = await buildHarness();
+    try {
+      const batchId = 'batch-question-plus-noise';
+      const batch = await seedBatch(h, batchId, 1);
+      h.service.emit('batch.submitted', { batch });
+      await waitFor(() => h.engine.invocations.length === 1);
+
+      const invocation = h.engine.invocations[0];
+      const question = makeQuestion('q-1');
+      const questionEnvelope = JSON.stringify({
+        type: 'question',
+        question,
+      });
+      const noiseEnvelope = JSON.stringify({ type: 'noise', value: 1 });
+      const combined = `${questionEnvelope}\nand ${noiseEnvelope}`;
+
+      // Answer first so the runner learns the client id and can
+      // forward the question frame when the envelope arrives.
+      await h.service.answerClarifyWithClient(
+        batchId,
+        makeAnswer('q-1'),
+        'client-q-noise',
+      );
+
+      invocation.onEvent?.({
+        timestamp: new Date().toISOString(),
+        type: 'assistant',
+        role: 'orchestrator',
+        content: `[THINK] ${combined}...`,
+        payload: combined,
+      });
+
+      await waitFor(() => h.sent.some((f) => f.msg.type === 'clarify.question'));
+      const questionFrames = h.sent.filter((f) => f.msg.type === 'clarify.question');
+      expect(questionFrames).toHaveLength(1);
+      expect(questionFrames[0].clientId).toBe('client-q-noise');
+
+      // The buffered answer flushes after the first assistant event.
+      await waitFor(() => h.engine.injections.length === 1);
+      expect(h.runner.activeRunCount()).toBe(1);
+    } finally {
+      await cleanup(h);
+    }
+  });
+
+  it('logs prose-only turn ignored when envelopes exist but none match', async () => {
+    const h = await buildHarness();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {
+      /* swallow */
+    });
+    try {
+      const batchId = 'batch-prose-only';
+      const batch = await seedBatch(h, batchId, 1);
+      h.service.emit('batch.submitted', { batch });
+      await waitFor(() => h.engine.invocations.length === 1);
+
+      const invocation = h.engine.invocations[0];
+      // Envelope parses cleanly but matches neither the question nor
+      // the finalize shape — the branch where the runner should emit
+      // `prose-only turn ignored` rather than `dropping malformed`.
+      const noiseEnvelope = JSON.stringify({ note: 'not a question' });
+      invocation.onEvent?.({
+        timestamp: new Date().toISOString(),
+        type: 'assistant',
+        role: 'orchestrator',
+        content: `[THINK] Thinking out loud... ${noiseEnvelope}`,
+        payload: `Thinking out loud... ${noiseEnvelope}`,
+      });
+
+      // Runner stays alive; only a prose-only warning was logged.
+      expect(h.runner.activeRunCount()).toBe(1);
+
+      const proseLine = warnSpy.mock.calls
+        .map((args) => String(args[0] ?? ''))
+        .find((line) =>
+          line.startsWith(`[clarifier]: run ${batchId} prose-only turn ignored`),
+        );
+      expect(proseLine).toBeDefined();
+
+      const malformedLine = warnSpy.mock.calls
+        .map((args) => String(args[0] ?? ''))
+        .find((line) =>
+          line.includes(`dropping malformed assistant line for "${batchId}"`),
+        );
+      expect(malformedLine).toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
+      await cleanup(h);
+    }
+  });
+
+  it('still logs dropping malformed when no balanced braces are present', async () => {
+    const h = await buildHarness();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {
+      /* swallow */
+    });
+    try {
+      const batchId = 'batch-legacy-malformed';
+      const batch = await seedBatch(h, batchId, 1);
+      h.service.emit('batch.submitted', { batch });
+      await waitFor(() => h.engine.invocations.length === 1);
+
+      const invocation = h.engine.invocations[0];
+      invocation.onEvent?.({
+        timestamp: new Date().toISOString(),
+        type: 'assistant',
+        role: 'orchestrator',
+        content: '[THINK] {"a":...',
+        payload: '{"a":',
+      });
+
+      const malformedLine = warnSpy.mock.calls
+        .map((args) => String(args[0] ?? ''))
+        .find((line) =>
+          line.includes(`dropping malformed assistant line for "${batchId}"`),
+        );
+      expect(malformedLine).toBeDefined();
+
+      const proseLine = warnSpy.mock.calls
+        .map((args) => String(args[0] ?? ''))
+        .find((line) =>
+          line.startsWith(`[clarifier]: run ${batchId} prose-only turn ignored`),
+        );
+      expect(proseLine).toBeUndefined();
+
+      expect(h.runner.activeRunCount()).toBe(1);
+    } finally {
+      warnSpy.mockRestore();
+      await cleanup(h);
+    }
+  });
+});
