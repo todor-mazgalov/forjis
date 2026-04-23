@@ -277,6 +277,11 @@ function buildDrawerHeader(): { header: HTMLElement; chevron: HTMLButtonElement 
   chevron.className = 'queue-chevron';
   chevron.setAttribute('data-forjis-queue-chevron', 'true');
   chevron.setAttribute('aria-label', 'Collapse queue drawer');
+  // Hover tooltip — updated to "Expand" / "Collapse" as state changes
+  // (see applyExpanded in createQueuePanel). The chevron is only visible
+  // when the drawer is open, but the pill also reflects the expanded
+  // state via aria-expanded so assistive tech stays in sync.
+  chevron.setAttribute('title', 'Collapse');
   chevron.textContent = '‹';
   header.appendChild(chevron);
   return { header, chevron };
@@ -535,6 +540,11 @@ export function createQueuePanel(
   const applyExpanded = (): void => {
     dom.drawer.setAttribute('data-open', expanded ? 'true' : 'false');
     dom.pill.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    // Tooltip reflects the verb that activating each control will perform:
+    // clicking the pill when collapsed expands the drawer; clicking the
+    // chevron when expanded collapses it.
+    dom.pill.setAttribute('title', expanded ? 'Collapse' : 'Expand');
+    dom.chevron.setAttribute('title', expanded ? 'Collapse' : 'Expand');
     writeCollapsedFlag(!expanded);
   };
 

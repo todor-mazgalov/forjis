@@ -270,4 +270,61 @@ describe('queue-panel', () => {
     expect(css).toContain('--border');
     expect(css).toContain('--text');
   });
+
+  it('inspector-025 — fresh mount with empty sessionStorage defaults to collapsed', () => {
+    // The beforeEach hook clears sessionStorage and mounts a fresh panel;
+    // the drawer must be closed so the host page is not obstructed.
+    const drawer = shadow.querySelector('.queue-drawer');
+    expect(drawer?.getAttribute('data-open')).toBe('false');
+  });
+
+  it('inspector-025 — expanded state persists across a remount in the same session', () => {
+    const pill = shadow.querySelector<HTMLElement>('.queue-pill');
+    pill?.click();
+    const drawer = shadow.querySelector('.queue-drawer');
+    expect(drawer?.getAttribute('data-open')).toBe('true');
+
+    // Remount without clearing sessionStorage.
+    panel.destroy();
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    shadow = host.attachShadow({ mode: 'open' });
+    panel = createQueuePanel({ shadow, onSubmitBatch, onNavigateToPin });
+    const drawer2 = shadow.querySelector('.queue-drawer');
+    expect(drawer2?.getAttribute('data-open')).toBe('true');
+  });
+
+  it('inspector-025 — clearing sessionStorage reverts a remount to the collapsed default', () => {
+    const pill = shadow.querySelector<HTMLElement>('.queue-pill');
+    pill?.click();
+    const drawer = shadow.querySelector('.queue-drawer');
+    expect(drawer?.getAttribute('data-open')).toBe('true');
+
+    // Simulate a new session.
+    panel.destroy();
+    window.sessionStorage.clear();
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    shadow = host.attachShadow({ mode: 'open' });
+    panel = createQueuePanel({ shadow, onSubmitBatch, onNavigateToPin });
+    const drawer2 = shadow.querySelector('.queue-drawer');
+    expect(drawer2?.getAttribute('data-open')).toBe('false');
+  });
+
+  it('inspector-025 — pill + chevron tooltips reflect the current collapse state', () => {
+    const pill = shadow.querySelector<HTMLElement>('.queue-pill');
+    const chevron = shadow.querySelector<HTMLButtonElement>(
+      '[data-forjis-queue-chevron]',
+    );
+    // Collapsed default — activating the pill will expand.
+    expect(pill?.getAttribute('title')).toBe('Expand');
+    pill?.click();
+    expect(pill?.getAttribute('title')).toBe('Collapse');
+    expect(chevron?.getAttribute('title')).toBe('Collapse');
+    pill?.click();
+    expect(pill?.getAttribute('title')).toBe('Expand');
+    expect(chevron?.getAttribute('title')).toBe('Expand');
+  });
 });

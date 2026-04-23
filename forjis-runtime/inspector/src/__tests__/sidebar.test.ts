@@ -391,36 +391,41 @@ describe('sidebar', () => {
     handle.destroy();
   });
 
-  it('inspector-023 defect C — chevron collapses the sidebar and flips data-collapsed', () => {
+  it('inspector-023 defect C — chevron toggles the sidebar and flips data-collapsed', () => {
     const { shadow } = attachShadow();
     createSidebar({ shadow, onReply: () => undefined });
     const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
-    expect(root.getAttribute('data-collapsed')).toBe('false');
+    // inspector-025: fresh mount defaults to collapsed.
+    expect(root.getAttribute('data-collapsed')).toBe('true');
     const chevron = root.querySelector<HTMLButtonElement>(
       '[data-forjis-sidebar-chevron]',
     );
     expect(chevron).not.toBeNull();
     chevron?.click();
-    expect(root.getAttribute('data-collapsed')).toBe('true');
-    chevron?.click();
     expect(root.getAttribute('data-collapsed')).toBe('false');
+    chevron?.click();
+    expect(root.getAttribute('data-collapsed')).toBe('true');
   });
 
   it('inspector-023 defect C — sidebar collapse persists under forjis-inspector:sidebar.collapsed', () => {
     const { shadow } = attachShadow();
     createSidebar({ shadow, onReply: () => undefined });
     const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    // Fresh mount writes the collapsed default into storage.
+    expect(
+      window.sessionStorage.getItem('forjis-inspector:sidebar.collapsed'),
+    ).toBe('true');
     const chevron = root.querySelector<HTMLButtonElement>(
       '[data-forjis-sidebar-chevron]',
     );
     chevron?.click();
     expect(
       window.sessionStorage.getItem('forjis-inspector:sidebar.collapsed'),
-    ).toBe('true');
+    ).toBe('false');
     chevron?.click();
     expect(
       window.sessionStorage.getItem('forjis-inspector:sidebar.collapsed'),
-    ).toBe('false');
+    ).toBe('true');
   });
 
   it('inspector-023 defect C — collapsed state rehydrates on mount from sessionStorage', () => {
@@ -429,6 +434,84 @@ describe('sidebar', () => {
     createSidebar({ shadow, onReply: () => undefined });
     const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
     expect(root.getAttribute('data-collapsed')).toBe('true');
+  });
+
+  it('inspector-025 — fresh mount with empty sessionStorage defaults to collapsed', () => {
+    // No sessionStorage entry → default collapsed so the host page's
+    // left gutter is not covered.
+    expect(
+      window.sessionStorage.getItem('forjis-inspector:sidebar.collapsed'),
+    ).toBeNull();
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    expect(root.getAttribute('data-collapsed')).toBe('true');
+  });
+
+  it('inspector-025 — expanded state persists across a remount in the same session', () => {
+    const first = attachShadow();
+    const handle1 = createSidebar({
+      shadow: first.shadow,
+      onReply: () => undefined,
+    });
+    const firstRoot = first.shadow.querySelector(
+      '[data-forjis-sidebar]',
+    ) as HTMLElement;
+    const chevron = firstRoot.querySelector<HTMLButtonElement>(
+      '[data-forjis-sidebar-chevron]',
+    );
+    chevron?.click();
+    expect(firstRoot.getAttribute('data-collapsed')).toBe('false');
+    handle1.destroy();
+
+    // Remount without touching sessionStorage — the expanded choice should
+    // rehydrate.
+    const second = attachShadow();
+    createSidebar({ shadow: second.shadow, onReply: () => undefined });
+    const secondRoot = second.shadow.querySelector(
+      '[data-forjis-sidebar]',
+    ) as HTMLElement;
+    expect(secondRoot.getAttribute('data-collapsed')).toBe('false');
+  });
+
+  it('inspector-025 — clearing sessionStorage reverts a remount to the collapsed default', () => {
+    const first = attachShadow();
+    const handle1 = createSidebar({
+      shadow: first.shadow,
+      onReply: () => undefined,
+    });
+    const firstRoot = first.shadow.querySelector(
+      '[data-forjis-sidebar]',
+    ) as HTMLElement;
+    const chevron = firstRoot.querySelector<HTMLButtonElement>(
+      '[data-forjis-sidebar-chevron]',
+    );
+    chevron?.click();
+    expect(firstRoot.getAttribute('data-collapsed')).toBe('false');
+    handle1.destroy();
+
+    // Simulate a new session by clearing sessionStorage.
+    window.sessionStorage.clear();
+    const second = attachShadow();
+    createSidebar({ shadow: second.shadow, onReply: () => undefined });
+    const secondRoot = second.shadow.querySelector(
+      '[data-forjis-sidebar]',
+    ) as HTMLElement;
+    expect(secondRoot.getAttribute('data-collapsed')).toBe('true');
+  });
+
+  it('inspector-025 — chevron title tooltip reads "Expand" when collapsed and "Collapse" when expanded', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const chevron = root.querySelector<HTMLButtonElement>(
+      '[data-forjis-sidebar-chevron]',
+    );
+    expect(chevron?.getAttribute('title')).toBe('Expand');
+    chevron?.click();
+    expect(chevron?.getAttribute('title')).toBe('Collapse');
+    chevron?.click();
+    expect(chevron?.getAttribute('title')).toBe('Expand');
   });
 
   it('inspector-023 defect C — collapsed rail declares 28px width in CSS', () => {
