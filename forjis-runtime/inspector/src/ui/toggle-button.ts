@@ -6,6 +6,12 @@
  * are hidden while inspect is OFF. Each button is a native `<button>`
  * for keyboard accessibility.
  *
+ * Theming: the segmented control adopts the Forjis TopBar pill shape
+ * (fully-rounded container, `border-radius: 999px`) plus an accent
+ * underline on the active tool segment. All colors come from the
+ * shared design tokens declared by `ui/theme.ts` and injected into the
+ * overlay's shadow root by `ui/overlay.ts`; see `OVERLAY_STYLE`.
+ *
  * design.md §D-004, FR-010-033.
  */
 

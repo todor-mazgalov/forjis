@@ -26,6 +26,7 @@ import {
   onToolChange,
   setTool,
 } from './picker-tool.js';
+import { FORJIS_TOKENS } from './theme.js';
 import { createToggleButton, type ToggleButtonHandle } from './toggle-button.js';
 
 /** Options accepted by {@link initOverlay}. */
@@ -90,6 +91,12 @@ type OverlayState =
   | { phase: 'idle' }
   | { phase: 'pending'; el: Element };
 
+/**
+ * Overlay-level CSS. Consumes the Forjis design tokens copied under
+ * `:host`; the segmented-control adopts the pill shape + accent-underline
+ * pattern from the dashboard's TopBar.tab variant so the inspector's
+ * floating control reads on-brand against any host page.
+ */
 const OVERLAY_STYLE = `
 :host, :root { all: initial; }
 div[data-forjis-role="toggle-container"] {
@@ -98,42 +105,45 @@ div[data-forjis-role="toggle-container"] {
   bottom: 16px;
   pointer-events: auto;
   display: inline-flex;
-  gap: 4px;
+  gap: 2px;
   align-items: center;
-  background: #1f2937;
-  color: #f9fafb;
-  border: 1px solid #374151;
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 4px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-  font: 500 13px/1 system-ui, -apple-system, sans-serif;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+  font: 500 var(--text-base)/1 var(--font-mono);
+  letter-spacing: 0.02em;
 }
 div[data-forjis-role="toggle-container"] button {
   pointer-events: auto;
   background: transparent;
-  color: inherit;
+  color: var(--text-dim);
   border: 0;
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 6px var(--space-4);
   min-height: 28px;
   min-width: 28px;
   font: inherit;
   cursor: pointer;
-}
-button[data-forjis-role="toggle"][data-mode="inspect"] {
-  background: #2563eb;
-  border-color: #1d4ed8;
-  color: #ffffff;
+  position: relative;
 }
 div[data-forjis-role="toggle-container"] button:hover {
-  background: rgba(255,255,255,0.08);
+  color: var(--text);
+  background: var(--bg-raised);
 }
 div[data-forjis-role="toggle-container"] button:active {
-  background: rgba(255,255,255,0.16);
+  background: var(--bg-sunken);
 }
 div[data-forjis-role="toggle-container"] button:focus-visible {
-  outline: 2px solid #60a5fa;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+button[data-forjis-role="toggle"][data-mode="inspect"] {
+  background: var(--accent);
+  color: var(--bg-base);
+  font-weight: 600;
 }
 button[data-forjis-role="tool-element"][data-visible="false"],
 button[data-forjis-role="tool-region"][data-visible="false"] {
@@ -141,29 +151,42 @@ button[data-forjis-role="tool-region"][data-visible="false"] {
 }
 button[data-forjis-role="tool-element"][data-active="true"],
 button[data-forjis-role="tool-region"][data-active="true"] {
-  background: #2563eb;
-  color: #ffffff;
+  color: var(--text);
+  background: var(--bg-raised);
+}
+/* Forjis TopBar-style accent underline on the active segment. */
+button[data-forjis-role="tool-element"][data-active="true"]::after,
+button[data-forjis-role="tool-region"][data-active="true"]::after {
+  content: '';
+  position: absolute;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: 2px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
 }
 div[data-forjis-role="highlight"] {
   position: fixed;
   pointer-events: none;
-  border: 2px solid rgba(37, 99, 235, 0.6);
-  background: rgba(37, 99, 235, 0.1);
+  border: 2px solid var(--accent);
+  background: var(--accent-glow);
   box-sizing: border-box;
 }
 div[data-forjis-role="highlight"][data-variant="pending"] {
-  border-color: rgba(234, 88, 12, 0.9);
-  background: rgba(234, 88, 12, 0.15);
-  box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.35);
+  border-color: var(--amber);
+  background: rgba(245, 192, 106, 0.18);
+  box-shadow: 0 0 0 2px rgba(245, 192, 106, 0.35);
 }
 div[data-forjis-role="label"] {
   position: fixed;
   pointer-events: none;
-  background: #111827;
-  color: #f9fafb;
-  font: 500 11px/1.2 system-ui, -apple-system, sans-serif;
-  padding: 4px 6px;
-  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: 500 var(--text-xs)/1.2 var(--font-mono);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   max-width: 320px;
   white-space: nowrap;
   overflow: hidden;
@@ -191,7 +214,9 @@ function styleRoot(root: HTMLElement): void {
 function createStyleNode(): HTMLStyleElement {
   const style = document.createElement('style');
   // Static markup — zero user-derived substrings, safe to assign.
-  style.textContent = OVERLAY_STYLE;
+  // Prepend the shared Forjis design-token declarations so the overlay's
+  // scoped rules can resolve `var(--bg-*)` / `var(--accent)` / etc.
+  style.textContent = FORJIS_TOKENS + OVERLAY_STYLE;
   return style;
 }
 

@@ -60,6 +60,10 @@ describe('queue-panel', () => {
   beforeEach(() => {
     __resetBatchStateForTests();
     document.body.innerHTML = '';
+    // The panel reads and writes sessionStorage for the collapse-rail
+    // contract (inspector-023 defect C). Reset between tests so the
+    // "collapsed by default" invariant holds independently of test order.
+    sessionStorage.clear();
     host = document.createElement('div');
     document.body.appendChild(host);
     shadow = host.attachShadow({ mode: 'open' });
@@ -214,5 +218,56 @@ describe('queue-panel', () => {
     expect(drawer?.getAttribute('data-open')).toBe('true');
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(drawer?.getAttribute('data-open')).toBe('false');
+  });
+
+  it('renders three rows for three queued pins (inspector-023 defect B)', () => {
+    addPin(makePin('p-1', '/a', 'first'));
+    addPin(makePin('p-2', '/a', 'second'));
+    addPin(makePin('p-3', '/a', 'third'));
+    const rows = shadow.querySelectorAll('.queue-row');
+    expect(rows).toHaveLength(3);
+    const ids = Array.from(rows).map((r) => r.getAttribute('data-pin-id'));
+    expect(ids).toEqual(['p-1', 'p-2', 'p-3']);
+  });
+
+  it('drawer exposes a scrollable list + 60vh cap so long queues stay on-screen (inspector-023 defect B)', () => {
+    const styleEl = shadow.querySelector<HTMLStyleElement>('style');
+    const css = styleEl?.textContent ?? '';
+    expect(/\.queue-list\s*{[^}]*overflow-y:\s*auto/.test(css)).toBe(true);
+    expect(/\.queue-drawer\s*{[^}]*max-height:\s*60vh/.test(css)).toBe(true);
+  });
+
+  it('chevron in drawer header collapses the drawer (inspector-023 defect C)', () => {
+    const pill = shadow.querySelector<HTMLElement>('.queue-pill');
+    pill?.click();
+    const drawer = shadow.querySelector('.queue-drawer');
+    expect(drawer?.getAttribute('data-open')).toBe('true');
+    const chevron = shadow.querySelector<HTMLButtonElement>(
+      '[data-forjis-queue-chevron]',
+    );
+    expect(chevron).not.toBeNull();
+    chevron?.click();
+    expect(drawer?.getAttribute('data-open')).toBe('false');
+  });
+
+  it('drawer state persists to sessionStorage under forjis-inspector:queue.collapsed (inspector-023 defect C)', () => {
+    const pill = shadow.querySelector<HTMLElement>('.queue-pill');
+    pill?.click();
+    expect(
+      window.sessionStorage.getItem('forjis-inspector:queue.collapsed'),
+    ).toBe('false');
+    pill?.click();
+    expect(
+      window.sessionStorage.getItem('forjis-inspector:queue.collapsed'),
+    ).toBe('true');
+  });
+
+  it('stylesheet declares Forjis design tokens under :host (inspector-023 defect D)', () => {
+    const styleEl = shadow.querySelector<HTMLStyleElement>('style');
+    const css = styleEl?.textContent ?? '';
+    expect(css).toContain('--bg-panel');
+    expect(css).toContain('--accent');
+    expect(css).toContain('--border');
+    expect(css).toContain('--text');
   });
 });
