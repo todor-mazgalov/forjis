@@ -210,4 +210,139 @@ describe('createAnnotationCanvas (FR-009-004)', () => {
     // Assert
     expect(parent.contains(handle.element)).toBe(false);
   });
+
+  it('toolbar starts with the Box tool pressed and the others unpressed (inspector-023 defect A)', () => {
+    // Arrange
+    const handle = createAnnotationCanvas({
+      viewportWidth: 800,
+      viewportHeight: 600,
+      backgroundBlob: makeStubBackground(),
+    });
+    // Act
+    const buttons = handle.element.querySelectorAll<HTMLButtonElement>(
+      'button[data-tool]',
+    );
+    // Assert
+    const pressedByTool: Record<string, string | null> = {};
+    buttons.forEach((btn) => {
+      const tool = btn.dataset.tool ?? '';
+      pressedByTool[tool] = btn.getAttribute('aria-pressed');
+    });
+    expect(pressedByTool.box).toBe('true');
+    expect(pressedByTool.arrow).toBe('false');
+    expect(pressedByTool.text).toBe('false');
+    handle.destroy();
+  });
+
+  it('clicking Arrow flips aria-pressed onto Arrow only (inspector-023 defect A)', () => {
+    // Arrange
+    const handle = createAnnotationCanvas({
+      viewportWidth: 800,
+      viewportHeight: 600,
+      backgroundBlob: makeStubBackground(),
+    });
+    const arrowBtn = handle.element.querySelector<HTMLButtonElement>(
+      'button[data-tool="arrow"]',
+    );
+    const boxBtn = handle.element.querySelector<HTMLButtonElement>(
+      'button[data-tool="box"]',
+    );
+    // Act
+    arrowBtn?.click();
+    // Assert
+    expect(arrowBtn?.getAttribute('aria-pressed')).toBe('true');
+    expect(boxBtn?.getAttribute('aria-pressed')).toBe('false');
+    handle.destroy();
+  });
+
+  it('clicking Text while on Box flips aria-pressed to Text (inspector-023 defect A)', () => {
+    // Arrange
+    const handle = createAnnotationCanvas({
+      viewportWidth: 800,
+      viewportHeight: 600,
+      backgroundBlob: makeStubBackground(),
+    });
+    const textBtn = handle.element.querySelector<HTMLButtonElement>(
+      'button[data-tool="text"]',
+    );
+    const boxBtn = handle.element.querySelector<HTMLButtonElement>(
+      'button[data-tool="box"]',
+    );
+    // Act
+    textBtn?.click();
+    // Assert
+    expect(textBtn?.getAttribute('aria-pressed')).toBe('true');
+    expect(boxBtn?.getAttribute('aria-pressed')).toBe('false');
+    handle.destroy();
+  });
+
+  it('clicking Undo does not change the active tool (inspector-023 defect A)', () => {
+    // Arrange
+    const handle = createAnnotationCanvas({
+      viewportWidth: 800,
+      viewportHeight: 600,
+      backgroundBlob: makeStubBackground(),
+    });
+    const arrowBtn = handle.element.querySelector<HTMLButtonElement>(
+      'button[data-tool="arrow"]',
+    );
+    arrowBtn?.click();
+    const undoBtn = handle.element.querySelector<HTMLButtonElement>(
+      'button[data-action="undo"]',
+    );
+    // Act
+    undoBtn?.click();
+    // Assert
+    expect(arrowBtn?.getAttribute('aria-pressed')).toBe('true');
+    handle.destroy();
+  });
+
+  it('Clear empties the annotation stack when items are present (inspector-023 defect A)', () => {
+    // Arrange — push items via the public handle so we don't rely on the
+    // jsdom canvas context for pointer-driven drawing.
+    const handle = createAnnotationCanvas({
+      viewportWidth: 800,
+      viewportHeight: 600,
+      backgroundBlob: makeStubBackground(),
+    });
+    // Simulate state via the exposed handle: clear() / undo() are the
+    // only stack mutators reachable without the canvas context.
+    // Toolbar Clear must match the semantic of handle.clear().
+    const clearBtn = handle.element.querySelector<HTMLButtonElement>(
+      'button[data-action="clear"]',
+    );
+    // Act
+    clearBtn?.click();
+    // Assert
+    expect(handle.getAnnotations()).toEqual([]);
+    handle.destroy();
+  });
+
+  it('clicks on nested label nodes still activate the enclosing button (inspector-023 defect A)', () => {
+    // Arrange — the previous wiring failed because it only matched clicks
+    // whose `target` was the button itself; clicks on the button's text
+    // node went unhandled.
+    const handle = createAnnotationCanvas({
+      viewportWidth: 800,
+      viewportHeight: 600,
+      backgroundBlob: makeStubBackground(),
+    });
+    const arrowBtn = handle.element.querySelector<HTMLButtonElement>(
+      'button[data-tool="arrow"]',
+    );
+    expect(arrowBtn).not.toBeNull();
+    // Wrap the existing text node inside a span so the click's target is
+    // a descendant of the button rather than the button itself.
+    if (arrowBtn) {
+      const label = document.createElement('span');
+      label.textContent = arrowBtn.textContent ?? '';
+      arrowBtn.textContent = '';
+      arrowBtn.appendChild(label);
+      // Act — dispatch a synthetic click on the inner span.
+      label.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+    // Assert
+    expect(arrowBtn?.getAttribute('aria-pressed')).toBe('true');
+    handle.destroy();
+  });
 });

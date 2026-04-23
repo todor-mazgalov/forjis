@@ -391,6 +391,82 @@ describe('sidebar', () => {
     handle.destroy();
   });
 
+  it('inspector-023 defect C — chevron collapses the sidebar and flips data-collapsed', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    expect(root.getAttribute('data-collapsed')).toBe('false');
+    const chevron = root.querySelector<HTMLButtonElement>(
+      '[data-forjis-sidebar-chevron]',
+    );
+    expect(chevron).not.toBeNull();
+    chevron?.click();
+    expect(root.getAttribute('data-collapsed')).toBe('true');
+    chevron?.click();
+    expect(root.getAttribute('data-collapsed')).toBe('false');
+  });
+
+  it('inspector-023 defect C — sidebar collapse persists under forjis-inspector:sidebar.collapsed', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const chevron = root.querySelector<HTMLButtonElement>(
+      '[data-forjis-sidebar-chevron]',
+    );
+    chevron?.click();
+    expect(
+      window.sessionStorage.getItem('forjis-inspector:sidebar.collapsed'),
+    ).toBe('true');
+    chevron?.click();
+    expect(
+      window.sessionStorage.getItem('forjis-inspector:sidebar.collapsed'),
+    ).toBe('false');
+  });
+
+  it('inspector-023 defect C — collapsed state rehydrates on mount from sessionStorage', () => {
+    window.sessionStorage.setItem('forjis-inspector:sidebar.collapsed', 'true');
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    expect(root.getAttribute('data-collapsed')).toBe('true');
+  });
+
+  it('inspector-023 defect C — collapsed rail declares 28px width in CSS', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const styleEl = root.querySelector('style') as HTMLStyleElement;
+    const css = styleEl.textContent ?? '';
+    expect(
+      /data-collapsed="true"\]\s*{[^}]*width:\s*28px/s.test(css),
+    ).toBe(true);
+  });
+
+  it('inspector-023 defect C — collapsed rail carries a vertical "Finalized batches" label', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const railLabel = root.querySelector('.sidebar-rail-label');
+    expect(railLabel).not.toBeNull();
+    expect(railLabel?.textContent).toBe('Finalized batches');
+    const styleEl = root.querySelector('style') as HTMLStyleElement;
+    const css = styleEl.textContent ?? '';
+    expect(/\.sidebar-rail-label\s*{[^}]*writing-mode:\s*vertical-rl/.test(css))
+      .toBe(true);
+  });
+
+  it('inspector-023 defect D — sidebar stylesheet declares Forjis design tokens', () => {
+    const { shadow } = attachShadow();
+    createSidebar({ shadow, onReply: () => undefined });
+    const root = shadow.querySelector('[data-forjis-sidebar]') as HTMLElement;
+    const styleEl = root.querySelector('style') as HTMLStyleElement;
+    const css = styleEl.textContent ?? '';
+    expect(css).toContain('--bg-panel');
+    expect(css).toContain('--accent');
+    expect(css).toContain('--border');
+    expect(css).toContain('--text');
+  });
+
   it('NFR-011-004 — expand and Reply controls declare 44×44 tap targets via inline CSS', () => {
     const { shadow } = attachShadow();
     createSidebar({ shadow, onReply: () => undefined });

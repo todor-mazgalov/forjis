@@ -3,8 +3,7 @@
  *
  * Layers a `<canvas>` over the viewport-screenshot thumbnail inside the
  * comment sheet (design.md §D-006, spec FR-009-004). The user can draw box,
- * arrow, and text annotations; undo pops the last; per-item delete happens
- * on hover via a small close button.
+ * arrow, and text annotations; undo pops the last; clear drops the stack.
  *
  * Coordinate normalization: the canvas's intrinsic pixel size equals the
  * original viewport PNG (`viewportWidth × viewportHeight`), so the `Bbox`
@@ -12,9 +11,14 @@
  * not thumbnail-display space (FR-009-004 scenario "Coordinates normalize to
  * viewport pixel dimensions"). Pointer events report their offset in
  * display space; we scale by the canvas's intrinsic/CSS width ratio.
+ *
+ * Theming: colors come from the Forjis design-token set copied under
+ * `:host` by {@link FORJIS_TOKENS}. Inline strokes still use explicit hex
+ * values because the 2D canvas context has no CSS-variable resolution.
  */
 
 import type { Annotation, Bbox } from '@forjis/shared';
+import { FORJIS_TOKENS } from './theme.js';
 
 /** Options accepted by {@link createAnnotationCanvas}. */
 export interface InitAnnotationCanvasOptions {
@@ -43,10 +47,15 @@ export interface AnnotationCanvasHandle {
 /** Closed set of drawing tools the toolbar exposes. */
 type Tool = 'box' | 'arrow' | 'text';
 
-/** Stroke / fill constants — visible against arbitrary host backgrounds. */
-const STROKE_COLOR = '#EA580C';
+/**
+ * Stroke / fill constants — the canvas context cannot resolve CSS
+ * variables, so the mint-accent and body-text colors are duplicated as
+ * literal hex values. These mirror `--accent` and `--text` at current
+ * token values.
+ */
+const STROKE_COLOR = '#7fe0a3';
 const STROKE_WIDTH = 2;
-const TEXT_COLOR = '#111827';
+const TEXT_COLOR = '#d4dadf';
 const TEXT_FONT = '14px system-ui, -apple-system, sans-serif';
 
 /**
@@ -67,8 +76,10 @@ const ANNOTATION_STYLE = `
 .annotation-container {
   position: relative;
   width: 100%;
-  background: #0f172a;
+  background: var(--bg-base);
+  color: var(--text);
   overflow: hidden;
+  font-family: var(--font-sans);
 }
 .annotation-bg {
   display: block;
@@ -87,31 +98,37 @@ const ANNOTATION_STYLE = `
 }
 .annotation-toolbar {
   display: flex;
-  gap: 6px;
-  padding: 6px;
-  background: #1f2937;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
 }
 .annotation-toolbar button {
-  background: #374151;
-  color: #f9fafb;
-  border: 1px solid #4b5563;
-  border-radius: 4px;
-  padding: 4px 8px;
-  font: 500 12px/1 system-ui, -apple-system, sans-serif;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px var(--space-3);
+  font: 500 var(--text-sm)/1 var(--font-sans);
   cursor: pointer;
 }
-.annotation-toolbar button[data-active="true"] {
-  background: #2563eb;
-  border-color: #1d4ed8;
+.annotation-toolbar button:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.annotation-toolbar button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--bg-base);
+  border-color: var(--accent);
 }
 .annotation-text-input {
   position: absolute;
   font: ${TEXT_FONT};
   padding: 2px 4px;
-  border: 1px solid ${STROKE_COLOR};
-  background: #ffffff;
-  color: ${TEXT_COLOR};
-  border-radius: 2px;
+  border: 1px solid var(--accent);
+  background: var(--bg-panel);
+  color: var(--text);
+  border-radius: var(--radius-xs);
   min-width: 80px;
 }
 `;
@@ -133,7 +150,7 @@ function buildDom(opts: InitAnnotationCanvasOptions): {
   const container = document.createElement('div');
   container.className = 'annotation-container';
   const style = document.createElement('style');
-  style.textContent = ANNOTATION_STYLE;
+  style.textContent = FORJIS_TOKENS + ANNOTATION_STYLE;
   container.appendChild(style);
   const backgroundUrl = URL.createObjectURL(opts.backgroundBlob);
   const bg = document.createElement('img');
@@ -154,11 +171,17 @@ function buildDom(opts: InitAnnotationCanvasOptions): {
 /**
  * Build the toolbar element with tool + undo + clear buttons.
  *
+ * Each button declares `aria-pressed` from construction so screen readers
+ * and tests can observe the active-tool state without waiting for the
+ * first `updateToolbar` call.
+ *
  * @returns Toolbar element with `<button>` children for each action.
  */
 function buildToolbar(): HTMLElement {
   const toolbar = document.createElement('div');
   toolbar.className = 'annotation-toolbar';
+  toolbar.setAttribute('role', 'toolbar');
+  toolbar.setAttribute('aria-label', 'Annotation tools');
   const tools: Array<{ tool: Tool; label: string }> = [
     { tool: 'box', label: 'Box' },
     { tool: 'arrow', label: 'Arrow' },
@@ -168,20 +191,30 @@ function buildToolbar(): HTMLElement {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.dataset.tool = tool;
+    btn.setAttribute('aria-pressed', 'false');
+    btn.setAttribute('aria-label', label + ' tool');
     btn.textContent = label;
     toolbar.appendChild(btn);
   }
-  const undo = document.createElement('button');
-  undo.type = 'button';
-  undo.dataset.action = 'undo';
-  undo.textContent = 'Undo';
-  toolbar.appendChild(undo);
-  const clearBtn = document.createElement('button');
-  clearBtn.type = 'button';
-  clearBtn.dataset.action = 'clear';
-  clearBtn.textContent = 'Clear';
-  toolbar.appendChild(clearBtn);
+  toolbar.appendChild(buildActionButton('undo', 'Undo'));
+  toolbar.appendChild(buildActionButton('clear', 'Clear'));
   return toolbar;
+}
+
+/**
+ * Build an action button (Undo / Clear) for the annotation toolbar.
+ *
+ * @param action - Action name stored on `data-action`.
+ * @param label - Visible label text.
+ * @returns The button element.
+ */
+function buildActionButton(action: 'undo' | 'clear', label: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.dataset.action = action;
+  btn.setAttribute('aria-label', label);
+  btn.textContent = label;
+  return btn;
 }
 
 /**
@@ -280,6 +313,24 @@ function paintArrow(ctx: CanvasRenderingContext2D, bbox: Bbox): void {
     y2 - headLen * Math.sin(angle + Math.PI / 6),
   );
   ctx.stroke();
+}
+
+/**
+ * Reflect the currently-selected tool onto the toolbar buttons — writes
+ * `aria-pressed="true"` on the active button and `"false"` on the others.
+ *
+ * @param toolbar - Toolbar element.
+ * @param activeTool - The tool to mark as pressed.
+ */
+function syncToolbar(toolbar: HTMLElement, activeTool: Tool): void {
+  const toolButtons = toolbar.querySelectorAll<HTMLButtonElement>(
+    'button[data-tool]',
+  );
+  toolButtons.forEach((btn) => {
+    const pressed = btn.dataset.tool === activeTool;
+    btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    btn.dataset.active = pressed ? 'true' : 'false';
+  });
 }
 
 /**
@@ -406,32 +457,47 @@ export function createAnnotationCanvas(
     redraw();
   };
 
-  const updateToolbar = (): void => {
-    const toolButtons = toolbar.querySelectorAll<HTMLButtonElement>('button[data-tool]');
-    toolButtons.forEach((btn) => {
-      btn.dataset.active = btn.dataset.tool === activeTool ? 'true' : 'false';
-    });
+  /**
+   * Resolve the `<button>` ancestor of the click target. Using `closest()`
+   * lets nested spans (e.g. an icon or label) forward their clicks to the
+   * correct button — this is what was causing Arrow / Text to appear inert
+   * when the click landed on inner text nodes.
+   *
+   * @param e - Click event from the toolbar.
+   * @returns The enclosing button, or `null` when the click was elsewhere.
+   */
+  const resolveButton = (e: MouseEvent): HTMLButtonElement | null => {
+    const target = e.target;
+    if (!(target instanceof Element)) {
+      return null;
+    }
+    const btn = target.closest('button');
+    return btn instanceof HTMLButtonElement ? btn : null;
   };
 
   const onToolbarClick = (e: MouseEvent): void => {
-    const target = e.target;
-    if (!(target instanceof HTMLButtonElement)) {
+    const btn = resolveButton(e);
+    if (!btn) {
       return;
     }
-    if (target.dataset.tool) {
-      activeTool = target.dataset.tool as Tool;
+    if (btn.dataset.tool) {
+      activeTool = btn.dataset.tool as Tool;
       inProgress = null;
-      updateToolbar();
+      if (activeTextInput) {
+        activeTextInput.remove();
+        activeTextInput = null;
+      }
+      syncToolbar(toolbar, activeTool);
       redraw();
       return;
     }
-    if (target.dataset.action === 'undo') {
+    if (btn.dataset.action === 'undo') {
       annotations.pop();
       inProgress = null;
       redraw();
       return;
     }
-    if (target.dataset.action === 'clear') {
+    if (btn.dataset.action === 'clear') {
       annotations.length = 0;
       inProgress = null;
       redraw();
@@ -442,7 +508,7 @@ export function createAnnotationCanvas(
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   toolbar.addEventListener('click', onToolbarClick);
-  updateToolbar();
+  syncToolbar(toolbar, activeTool);
 
   let destroyed = false;
   return {

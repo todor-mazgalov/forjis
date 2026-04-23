@@ -8,6 +8,12 @@
  * shows a status dot, pin count, up to two thumbnails, timestamp, and an
  * expand affordance that reveals per-pin rows with **Reply** controls.
  *
+ * Collapse rail: a chevron button at the header collapses the sidebar
+ * into a 28-px vertical rail that surfaces only the vertical "Finalized
+ * batches" label + the chevron (pointing the other way). Expanded /
+ * collapsed state persists for the session under
+ * `sessionStorage['forjis-inspector:sidebar.collapsed']`.
+ *
  * Failed batches (`batch.status === 'failed'`) render an inline failure
  * card: the existing `[data-status="failed"]` rule paints the red dot,
  * the summary text appears beneath the thumbnails, and two actions
@@ -28,6 +34,7 @@ import {
   type Unsubscribe,
 } from '../history/history-store.js';
 import type { HistoryEntry } from '../history/storage.js';
+import { FORJIS_TOKENS } from './theme.js';
 
 /**
  * Reply mode hinting whether the sidebar's reply action originates from a
@@ -97,6 +104,9 @@ export interface SidebarHandle {
 /** Max characters rendered per per-pin row comment excerpt before ellipsis. */
 const COMMENT_MAX_LEN = 80;
 
+/** SessionStorage key tracking the sidebar's collapsed state. */
+export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'forjis-inspector:sidebar.collapsed';
+
 /** Inline CSS for the sidebar — isolated inside the shadow root. */
 const SIDEBAR_STYLE = `
 aside[data-forjis-sidebar] {
@@ -105,160 +115,215 @@ aside[data-forjis-sidebar] {
   bottom: 0;
   left: 0;
   width: 280px;
-  background: #ffffff;
-  border-right: 1px solid #e5e7eb;
-  box-shadow: 2px 0 10px rgba(0,0,0,0.05);
-  font: 13px/1.4 system-ui, -apple-system, sans-serif;
-  color: #111827;
+  background: var(--bg-panel);
+  color: var(--text);
+  border-right: 1px solid var(--border);
+  box-shadow: 2px 0 10px rgba(0,0,0,0.35);
+  font: var(--text-base)/1.4 var(--font-sans);
   pointer-events: auto;
   z-index: 5;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
+  transition: width 120ms ease-out;
+}
+aside[data-forjis-sidebar][data-collapsed="true"] {
+  width: 28px;
+}
+aside[data-forjis-sidebar][data-collapsed="true"] .sidebar-list,
+aside[data-forjis-sidebar][data-collapsed="true"] .sidebar-header-title {
+  display: none;
 }
 .sidebar-header {
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px var(--space-4);
   font-weight: 600;
-  font-size: 12px;
-  color: #374151;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f9fafb;
+  font-size: var(--text-sm);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+aside[data-forjis-sidebar][data-collapsed="true"] .sidebar-header {
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 0;
+  background: transparent;
+  height: 100%;
+  justify-content: flex-start;
+}
+.sidebar-header-title {
+  color: var(--text);
+}
+.sidebar-rail-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  user-select: none;
+  display: none;
+}
+aside[data-forjis-sidebar][data-collapsed="true"] .sidebar-rail-label {
+  display: inline-block;
+}
+.sidebar-chevron {
+  min-width: 28px;
+  min-height: 28px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+.sidebar-chevron:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 .sidebar-empty {
-  color: #6b7280;
-  padding: 12px;
+  color: var(--text-muted);
+  padding: var(--space-4);
   text-align: center;
   font-style: italic;
 }
 .sidebar-batch-card {
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #f9fafb;
-  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .sidebar-batch-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
 }
 .sidebar-status-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #9ca3af;
+  background: var(--text-muted);
   flex-shrink: 0;
 }
-.sidebar-status-dot[data-status="done"] { background: #22c55e; }
-.sidebar-status-dot[data-status="running"] { background: #f59e0b; }
-.sidebar-status-dot[data-status="failed"] { background: #ef4444; }
-.sidebar-status-dot[data-status="finalized"] { background: #2563eb; }
+.sidebar-status-dot[data-status="done"] { background: var(--accent); }
+.sidebar-status-dot[data-status="running"] { background: var(--amber); }
+.sidebar-status-dot[data-status="failed"] { background: var(--red); }
+.sidebar-status-dot[data-status="finalized"] { background: var(--accent); }
 .sidebar-pin-count {
-  font-size: 12px;
-  color: #374151;
+  font-size: var(--text-sm);
+  color: var(--text);
 }
 .sidebar-timestamp {
   margin-left: auto;
-  font-size: 11px;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
 }
 .sidebar-thumbnails {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .sidebar-thumbnails img {
   width: 48px;
   height: 48px;
   object-fit: cover;
-  border-radius: 4px;
-  background: #e5e7eb;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
 }
 .sidebar-batch-expand {
   min-width: 44px;
   min-height: 44px;
   padding: 12px 16px;
-  background: #ffffff;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   cursor: pointer;
   font: inherit;
   box-sizing: border-box;
 }
+.sidebar-batch-expand:hover { border-color: var(--border-strong); }
 .sidebar-pin-rows {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px solid #e5e7eb;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border);
 }
 .sidebar-pin-row {
   display: grid;
   grid-template-columns: 40px 1fr auto;
-  gap: 6px;
+  gap: var(--space-2);
   align-items: center;
-  padding: 4px;
+  padding: var(--space-1);
 }
 .sidebar-pin-row img {
   width: 40px;
   height: 40px;
   object-fit: cover;
-  border-radius: 4px;
-  background: #e5e7eb;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
 }
 .sidebar-pin-comment {
-  font-size: 12px;
-  color: #374151;
+  font-size: var(--text-sm);
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .sidebar-pin-screen {
-  font-size: 11px;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
 }
 .sidebar-pin-status {
-  font-size: 10px;
-  color: #4b5563;
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
   text-transform: uppercase;
 }
 .sidebar-pin-reply {
   min-width: 44px;
   min-height: 44px;
   padding: 12px 16px;
-  background: #2563eb;
-  color: #ffffff;
-  border: 1px solid #1d4ed8;
-  border-radius: 4px;
+  background: var(--accent);
+  color: var(--bg-base);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
   cursor: pointer;
   font: inherit;
+  font-weight: 600;
   box-sizing: border-box;
 }
+.sidebar-pin-reply:hover { background: var(--accent-dim); border-color: var(--accent-dim); }
 .sidebar-failure-summary {
-  font-size: 12px;
-  color: #7f1d1d;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-  padding: 6px 8px;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: rgba(239, 109, 109, 0.08);
+  border: 1px solid rgba(239, 109, 109, 0.35);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
 }
 .sidebar-failure-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 .sidebar-failure-reply,
@@ -266,7 +331,7 @@ aside[data-forjis-sidebar] {
   min-width: 44px;
   min-height: 44px;
   padding: 12px 16px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   cursor: pointer;
   font: inherit;
   box-sizing: border-box;
@@ -276,15 +341,17 @@ aside[data-forjis-sidebar] {
   justify-content: center;
 }
 .sidebar-failure-reply {
-  background: #dc2626;
-  color: #ffffff;
-  border: 1px solid #b91c1c;
+  background: var(--red);
+  color: var(--bg-base);
+  border: 1px solid var(--red);
+  font-weight: 600;
 }
 .sidebar-failure-log {
-  background: #ffffff;
-  color: #374151;
-  border: 1px solid #d1d5db;
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
+.sidebar-failure-log:hover { border-color: var(--border-strong); }
 @media (max-width: 767.98px) {
   aside[data-forjis-sidebar] {
     top: 0;
@@ -295,7 +362,11 @@ aside[data-forjis-sidebar] {
     height: auto;
     max-height: 40vh;
     border-right: 0;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--border);
+  }
+  aside[data-forjis-sidebar][data-collapsed="true"] {
+    width: auto;
+    max-height: 28px;
   }
 }
 `;
@@ -559,6 +630,66 @@ function renderList(
 }
 
 /**
+ * Safely read the persisted sidebar collapsed flag.
+ *
+ * @returns `true` when the sidebar should start collapsed.
+ */
+function readSidebarCollapsedFlag(): boolean {
+  try {
+    return window.sessionStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Persist the sidebar collapsed flag; swallows storage errors.
+ *
+ * @param collapsed - Whether the sidebar is collapsed.
+ */
+function writeSidebarCollapsedFlag(collapsed: boolean): void {
+  try {
+    window.sessionStorage.setItem(
+      SIDEBAR_COLLAPSED_STORAGE_KEY,
+      collapsed ? 'true' : 'false',
+    );
+  } catch {
+    /* no-op — storage disabled or quota-exceeded. */
+  }
+}
+
+/**
+ * Build the header DOM for the sidebar (title, rail label, chevron).
+ *
+ * @returns Tuple with the header element, title span, and chevron button.
+ */
+function buildSidebarHeader(): {
+  header: HTMLElement;
+  title: HTMLElement;
+  railLabel: HTMLElement;
+  chevron: HTMLButtonElement;
+} {
+  const header = document.createElement('div');
+  header.className = 'sidebar-header';
+  const title = document.createElement('span');
+  title.className = 'sidebar-header-title';
+  title.textContent = 'Finalized batches';
+  header.appendChild(title);
+  const railLabel = document.createElement('span');
+  railLabel.className = 'sidebar-rail-label';
+  railLabel.textContent = 'Finalized batches';
+  header.appendChild(railLabel);
+  const chevron = document.createElement('button');
+  chevron.type = 'button';
+  chevron.className = 'sidebar-chevron';
+  chevron.setAttribute('data-forjis-sidebar-chevron', 'true');
+  chevron.setAttribute('aria-label', 'Collapse sidebar');
+  chevron.textContent = '‹';
+  header.appendChild(chevron);
+  return { header, title, railLabel, chevron };
+}
+
+/**
  * Build a sidebar, mount it into `opts.shadow`, and subscribe to history
  * mutations.
  *
@@ -569,11 +700,9 @@ export function createSidebar(opts: InitSidebarOptions): SidebarHandle {
   const root = document.createElement('aside');
   root.setAttribute('data-forjis-sidebar', 'true');
   const style = document.createElement('style');
-  style.textContent = SIDEBAR_STYLE;
+  style.textContent = FORJIS_TOKENS + SIDEBAR_STYLE;
   root.appendChild(style);
-  const header = document.createElement('div');
-  header.className = 'sidebar-header';
-  header.textContent = 'Finalized batches';
+  const { header, chevron } = buildSidebarHeader();
   root.appendChild(header);
   const list = document.createElement('div');
   list.className = 'sidebar-list';
@@ -582,6 +711,24 @@ export function createSidebar(opts: InitSidebarOptions): SidebarHandle {
   opts.shadow.appendChild(root);
   const expandedIds: Set<string> = new Set();
   let destroyed = false;
+  let collapsed = readSidebarCollapsedFlag();
+
+  const applyCollapsedState = (): void => {
+    root.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
+    chevron.textContent = collapsed ? '›' : '‹';
+    chevron.setAttribute(
+      'aria-label',
+      collapsed ? 'Expand sidebar' : 'Collapse sidebar',
+    );
+    writeSidebarCollapsedFlag(collapsed);
+  };
+
+  const toggleCollapsed = (): void => {
+    collapsed = !collapsed;
+    applyCollapsedState();
+  };
+
+  chevron.addEventListener('click', toggleCollapsed);
 
   const rerender = (entries: readonly HistoryEntry[]): void => {
     renderList(
@@ -606,6 +753,7 @@ export function createSidebar(opts: InitSidebarOptions): SidebarHandle {
   };
   const unsubscribe: Unsubscribe = subscribe(listener);
   rerender(getHistory());
+  applyCollapsedState();
 
   return {
     element: root,

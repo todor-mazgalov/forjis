@@ -25,6 +25,7 @@ import type {
   ClarifyQuestion,
 } from '@forjis/shared';
 import { getBatch, subscribe } from '../queue/batch-state.js';
+import { FORJIS_TOKENS } from './theme.js';
 
 /** Init options accepted by {@link createClarifyPanel}. */
 export interface InitClarifyPanelOptions {
@@ -62,12 +63,12 @@ div[data-forjis-clarify-panel] {
   left: 16px;
   width: 360px;
   max-height: 520px;
-  background: #ffffff;
-  color: #111827;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.2);
-  font: 13px/1.4 system-ui, -apple-system, sans-serif;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+  font: var(--text-base)/1.4 var(--font-sans);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -79,52 +80,55 @@ div[data-forjis-clarify-panel][data-open="false"] { display: none; }
 .clarify-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f9fafb;
+  gap: var(--space-3);
+  padding: 10px var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
 }
 .clarify-batch-id {
   font-weight: 600;
-  font-size: 12px;
-  color: #374151;
+  font-size: var(--text-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
 }
 .clarify-pin-count {
-  background: #eff6ff;
-  color: #1e40af;
+  background: var(--accent);
+  color: var(--bg-base);
   border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 12px;
+  padding: 2px var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 .clarify-token-budget {
   margin-left: auto;
-  font-size: 11px;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
 }
 .clarify-abort-btn {
   min-width: 44px;
   min-height: 44px;
   padding: 12px 16px;
-  background: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
+  background: var(--bg-sunken);
+  color: var(--red);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   cursor: pointer;
   font: inherit;
   box-sizing: border-box;
 }
+.clarify-abort-btn:hover:not(:disabled) { border-color: var(--red); }
 .clarify-abort-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .clarify-status {
-  padding: 6px 12px;
-  font-size: 12px;
-  color: #374151;
-  border-bottom: 1px solid #e5e7eb;
-  background: #ffffff;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
 }
 .clarify-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -132,20 +136,20 @@ div[data-forjis-clarify-panel][data-open="false"] { display: none; }
 .clarify-question {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #f9fafb;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
 }
 .clarify-question-text {
   font-weight: 600;
-  color: #111827;
+  color: var(--text);
 }
 .clarify-options {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .clarify-option-card {
   min-width: 44px;
@@ -155,65 +159,75 @@ div[data-forjis-clarify-panel][data-open="false"] { display: none; }
   flex-direction: column;
   gap: 2px;
   align-items: flex-start;
-  background: #ffffff;
-  color: inherit;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   text-align: left;
   font: inherit;
   cursor: pointer;
   box-sizing: border-box;
 }
-.clarify-option-card:hover:not([disabled]) { background: #eff6ff; }
+.clarify-option-card:hover:not([disabled]) { border-color: var(--accent); }
 .clarify-option-card[disabled] { opacity: 0.6; cursor: not-allowed; }
-.clarify-option-label { font-weight: 600; }
-.clarify-option-description { font-size: 12px; color: #4b5563; }
+.clarify-option-label { font-weight: 600; color: var(--text); }
+.clarify-option-description { font-size: var(--text-sm); color: var(--text-dim); }
 .clarify-freetext {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 6px;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
 }
 .clarify-freetext textarea {
   width: 100%;
   min-height: 64px;
   resize: vertical;
-  padding: 6px 8px;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--text);
+  border-radius: var(--radius);
   font: inherit;
   box-sizing: border-box;
 }
+.clarify-freetext textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
 .clarify-freetext-submit {
   min-width: 44px;
   min-height: 44px;
   padding: 12px 16px;
-  background: #2563eb;
-  color: #ffffff;
-  border: 1px solid #1d4ed8;
-  border-radius: 4px;
+  background: var(--accent);
+  color: var(--bg-base);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
   cursor: pointer;
   font: inherit;
+  font-weight: 600;
   align-self: flex-end;
   box-sizing: border-box;
 }
+.clarify-freetext-submit:hover:not(:disabled) { background: var(--accent-dim); border-color: var(--accent-dim); }
 .clarify-freetext-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 .clarify-user-reply {
-  margin-top: 6px;
-  padding: 6px 8px;
-  background: #eff6ff;
-  border-left: 3px solid #2563eb;
-  font-size: 12px;
-  color: #1e3a8a;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-sunken);
+  border-left: 3px solid var(--accent);
+  font-size: var(--text-sm);
+  color: var(--text);
 }
 .clarify-finalized-card {
-  padding: 16px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
-.clarify-finalized-label { font-weight: 600; }
-.clarify-finalized-path { font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; color: #374151; }
+.clarify-finalized-label { font-weight: 600; color: var(--text); }
+.clarify-finalized-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  word-break: break-all;
+  color: var(--text-dim);
+}
 @media (max-width: 767.98px) {
   div[data-forjis-clarify-panel] {
     left: 0;
@@ -244,7 +258,7 @@ function buildPanelDom(): PanelDom {
   root.setAttribute('data-forjis-clarify-panel', 'true');
   root.setAttribute('data-open', 'false');
   const style = document.createElement('style');
-  style.textContent = CLARIFY_PANEL_STYLE;
+  style.textContent = FORJIS_TOKENS + CLARIFY_PANEL_STYLE;
   root.appendChild(style);
   const header = document.createElement('div');
   header.className = 'clarify-header';

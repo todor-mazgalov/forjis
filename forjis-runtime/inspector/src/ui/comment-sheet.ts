@@ -27,6 +27,7 @@ import {
   createAnnotationCanvas,
   type AnnotationCanvasHandle,
 } from './annotation-canvas.js';
+import { FORJIS_TOKENS } from './theme.js';
 
 /** Init options accepted by {@link createCommentSheet}. */
 export interface InitCommentSheetOptions {
@@ -90,20 +91,21 @@ const COMMENT_SHEET_STYLE = `
 .comment-sheet-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.55);
   pointer-events: auto;
 }
 .comment-sheet-panel {
   position: fixed;
-  background: #ffffff;
-  color: #111827;
+  background: var(--bg-panel);
+  color: var(--text);
   pointer-events: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
-  font: 14px/1.4 system-ui, -apple-system, sans-serif;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.5);
+  border-left: 1px solid var(--border);
+  font: 14px/1.4 var(--font-sans);
   box-sizing: border-box;
   overflow: auto;
 }
@@ -115,16 +117,17 @@ const COMMENT_SHEET_STYLE = `
 }
 .comment-sheet-panel h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-md);
+  color: var(--text);
 }
 .comment-sheet-panel .group-count {
-  margin-left: 8px;
-  padding: 2px 8px;
-  background: #eff6ff;
-  color: #1e40af;
+  margin-left: var(--space-3);
+  padding: 2px var(--space-3);
+  background: var(--accent);
+  color: var(--bg-base);
   border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 .comment-sheet-panel .group-count[data-visible="false"] {
   display: none;
@@ -132,56 +135,68 @@ const COMMENT_SHEET_STYLE = `
 .comment-sheet-panel button {
   font: inherit;
   cursor: pointer;
-  border-radius: 4px;
-  border: 1px solid #d1d5db;
-  background: #f9fafb;
-  padding: 6px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+  padding: var(--space-2) var(--space-4);
   min-height: 28px;
 }
+.comment-sheet-panel button:hover:not(:disabled) { border-color: var(--border-strong); }
 .comment-sheet-panel button.primary {
-  background: #2563eb;
-  color: #ffffff;
-  border-color: #1d4ed8;
+  background: var(--accent);
+  color: var(--bg-base);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.comment-sheet-panel button.primary:hover:not(:disabled) {
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
 }
 .comment-sheet-panel button[data-action="close"] {
   background: transparent;
   border: 0;
+  color: var(--text-dim);
   font-size: 20px;
   line-height: 1;
-  padding: 0 4px;
+  padding: 0 var(--space-1);
 }
+.comment-sheet-panel button[data-action="close"]:hover { color: var(--text); }
 .preview {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 .element-screenshot {
   display: block;
   max-width: 100%;
   max-height: 160px;
   object-fit: contain;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 .viewport-surface {
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   overflow: hidden;
 }
 .comment {
   width: 100%;
   resize: vertical;
   font: inherit;
-  padding: 8px;
-  border-radius: 4px;
-  border: 1px solid #d1d5db;
+  color: var(--text);
+  background: var(--bg-sunken);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
   box-sizing: border-box;
 }
+.comment:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
 footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 @media (min-width: 768px) {
@@ -228,7 +243,7 @@ function buildSheetDom(): SheetDom {
   root.className = 'comment-sheet';
   root.setAttribute('data-open', 'false');
   const style = document.createElement('style');
-  style.textContent = COMMENT_SHEET_STYLE;
+  style.textContent = FORJIS_TOKENS + COMMENT_SHEET_STYLE;
   root.appendChild(style);
   const backdrop = document.createElement('div');
   backdrop.className = 'comment-sheet-backdrop';

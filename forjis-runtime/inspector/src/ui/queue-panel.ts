@@ -2,16 +2,25 @@
  * Queue panel UI (design.md §D-009, FR-010-019..028).
  *
  * A drawer hosted inside the overlay's shadow root. Collapsed state: a
- * circular pill in the bottom-left corner with a pin-count badge.
- * Expanded state: a ~360×480 px drawer with one row per queued pin
- * (thumbnail + truncated comment + navigate / edit / remove controls)
- * and a Submit button. Subscribes to `BatchState.subscribe` for reactive
- * re-rendering; honors `prefers-reduced-motion`; closes on Escape when
- * expanded.
+ * rounded "Queue" pill in the bottom-left corner with a pin-count badge.
+ * Expanded state: a ~360×480 px drawer with a chevron header, one row per
+ * queued pin (thumbnail + truncated comment + navigate / edit / remove
+ * controls), and a Submit button. Subscribes to `BatchState.subscribe`
+ * for reactive re-rendering; honors `prefers-reduced-motion`; closes on
+ * Escape when expanded.
+ *
+ * Drawer expanded/collapsed state persists for the session under
+ * `sessionStorage['forjis-inspector:queue.collapsed']`; when the key
+ * holds `"true"` at construction time the drawer starts collapsed.
+ *
+ * Theming: colors come from the Forjis design-token block copied under
+ * `:host` by {@link FORJIS_TOKENS} so the panel reads the dashboard's
+ * dark surfaces and mint accent.
  */
 
 import type { Batch, Pin } from '@forjis/shared';
 import { removePin, subscribe, updatePin } from '../queue/batch-state.js';
+import { FORJIS_TOKENS } from './theme.js';
 
 /** Init options accepted by {@link createQueuePanel}. */
 export interface InitQueuePanelOptions {
@@ -38,6 +47,9 @@ export interface QueuePanelHandle {
 /** Maximum comment length rendered per row. Excess is replaced with an ellipsis. */
 const COMMENT_MAX_LEN = 80;
 
+/** SessionStorage key tracking the drawer's collapsed state. */
+export const QUEUE_COLLAPSED_STORAGE_KEY = 'forjis-inspector:queue.collapsed';
+
 /** Inline CSS for the queue panel. */
 const QUEUE_PANEL_STYLE = `
 div[data-forjis-queue-panel] {
@@ -45,115 +57,157 @@ div[data-forjis-queue-panel] {
   bottom: 16px;
   left: 16px;
   pointer-events: auto;
-  font: 13px/1.4 system-ui, -apple-system, sans-serif;
-  color: #111827;
+  font: var(--text-base)/1.4 var(--font-sans);
+  color: var(--text);
 }
 .queue-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #1f2937;
-  color: #f9fafb;
-  border: 1px solid #374151;
+  gap: var(--space-2);
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 999px;
   min-width: 40px;
   min-height: 40px;
-  padding: 0 12px;
+  padding: 0 var(--space-4);
   cursor: pointer;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.35);
 }
-.queue-pill:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.queue-pill:hover { border-color: var(--border-strong); }
+.queue-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .queue-pill .count {
-  background: #2563eb;
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--bg-base);
   border-radius: 999px;
-  padding: 2px 8px;
+  padding: 2px var(--space-3);
   font-weight: 600;
-  font-size: 12px;
-  margin-left: 6px;
+  font-size: var(--text-sm);
 }
 .queue-drawer {
   position: fixed;
   left: 16px;
   bottom: 72px;
   width: 360px;
-  max-height: 480px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  max-height: 60vh;
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.2);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 .queue-drawer[data-open="false"] { display: none; }
+.queue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px var(--space-4);
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.queue-header .queue-chevron {
+  min-width: 28px;
+  min-height: 28px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+.queue-header .queue-chevron:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
 .queue-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-3);
 }
 .queue-row {
   display: grid;
   grid-template-columns: 48px 1fr auto;
-  gap: 8px;
+  gap: var(--space-3);
   align-items: center;
-  padding: 6px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #f9fafb;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
 }
+.queue-row:hover { border-color: var(--border-strong); }
 .queue-row img {
   width: 48px;
   height: 48px;
   object-fit: cover;
-  border-radius: 4px;
-  background: #e5e7eb;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
 }
-.queue-row .comment { font-size: 12px; color: #374151; cursor: pointer; }
-.queue-row .controls { display: flex; gap: 4px; }
+.queue-row .comment {
+  font-size: var(--text-sm);
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+  word-break: break-word;
+}
+.queue-row .controls { display: flex; gap: var(--space-1); }
 .queue-row button {
   min-width: 28px;
   min-height: 28px;
   background: transparent;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font: inherit;
 }
-.queue-row button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.queue-row button:hover { color: var(--text); border-color: var(--border-strong); }
+.queue-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .queue-row textarea {
   width: 100%;
   font: inherit;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  padding: 4px;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1);
   box-sizing: border-box;
 }
-.queue-edit-actions { display: flex; gap: 4px; margin-top: 4px; }
+.queue-edit-actions { display: flex; gap: var(--space-1); margin-top: var(--space-1); }
 .queue-footer {
-  border-top: 1px solid #e5e7eb;
-  padding: 8px;
+  border-top: 1px solid var(--border);
+  padding: var(--space-3);
   display: flex;
   justify-content: flex-end;
 }
 .queue-footer button {
-  background: #2563eb;
-  color: #ffffff;
-  border: 1px solid #1d4ed8;
-  border-radius: 4px;
-  padding: 6px 14px;
+  background: var(--accent);
+  color: var(--bg-base);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: var(--space-2) 14px;
   font: inherit;
+  font-weight: 600;
   cursor: pointer;
 }
+.queue-footer button:hover:not(:disabled) { background: var(--accent-dim); border-color: var(--accent-dim); }
 .queue-footer button:disabled {
-  background: #9ca3af;
-  border-color: #6b7280;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  border-color: var(--border);
   cursor: not-allowed;
 }
-.queue-empty { padding: 12px; color: #6b7280; text-align: center; }
+.queue-empty { padding: var(--space-4); color: var(--text-muted); text-align: center; }
 @media (prefers-reduced-motion: reduce) {
   .queue-drawer { transition: none; }
 }
@@ -179,21 +233,17 @@ interface PanelDom {
   pill: HTMLElement;
   pillCount: HTMLSpanElement;
   drawer: HTMLElement;
+  chevron: HTMLButtonElement;
   list: HTMLElement;
   submitBtn: HTMLButtonElement;
 }
 
 /**
- * Build the panel's structural DOM.
+ * Build the pill element and its inner label/count spans.
  *
- * @returns Fresh {@link PanelDom}.
+ * @returns Tuple with the pill wrapper and its count span.
  */
-function buildPanelDom(): PanelDom {
-  const root = document.createElement('div');
-  root.setAttribute('data-forjis-queue-panel', 'true');
-  const style = document.createElement('style');
-  style.textContent = QUEUE_PANEL_STYLE;
-  root.appendChild(style);
+function buildPill(): { pill: HTMLElement; count: HTMLSpanElement } {
   const pill = document.createElement('div');
   pill.className = 'queue-pill';
   pill.setAttribute('role', 'button');
@@ -207,12 +257,51 @@ function buildPanelDom(): PanelDom {
   pillCount.textContent = '0';
   pill.appendChild(pillLabel);
   pill.appendChild(pillCount);
+  return { pill, count: pillCount };
+}
+
+/**
+ * Build the drawer header with a title span and a chevron button that
+ * collapses the drawer back to the pill.
+ *
+ * @returns Tuple with the header and chevron button.
+ */
+function buildDrawerHeader(): { header: HTMLElement; chevron: HTMLButtonElement } {
+  const header = document.createElement('div');
+  header.className = 'queue-header';
+  const title = document.createElement('span');
+  title.textContent = 'Pin queue';
+  header.appendChild(title);
+  const chevron = document.createElement('button');
+  chevron.type = 'button';
+  chevron.className = 'queue-chevron';
+  chevron.setAttribute('data-forjis-queue-chevron', 'true');
+  chevron.setAttribute('aria-label', 'Collapse queue drawer');
+  chevron.textContent = '‹';
+  header.appendChild(chevron);
+  return { header, chevron };
+}
+
+/**
+ * Build the panel's structural DOM.
+ *
+ * @returns Fresh {@link PanelDom}.
+ */
+function buildPanelDom(): PanelDom {
+  const root = document.createElement('div');
+  root.setAttribute('data-forjis-queue-panel', 'true');
+  const style = document.createElement('style');
+  style.textContent = FORJIS_TOKENS + QUEUE_PANEL_STYLE;
+  root.appendChild(style);
+  const { pill, count: pillCount } = buildPill();
   root.appendChild(pill);
   const drawer = document.createElement('div');
   drawer.className = 'queue-drawer';
   drawer.setAttribute('data-open', 'false');
   drawer.setAttribute('role', 'region');
   drawer.setAttribute('aria-label', 'Pin queue');
+  const { header, chevron } = buildDrawerHeader();
+  drawer.appendChild(header);
   const list = document.createElement('div');
   list.className = 'queue-list';
   drawer.appendChild(list);
@@ -225,34 +314,24 @@ function buildPanelDom(): PanelDom {
   footer.appendChild(submitBtn);
   drawer.appendChild(footer);
   root.appendChild(drawer);
-  return { root, pill, pillCount, drawer, list, submitBtn };
+  return { root, pill, pillCount, drawer, chevron, list, submitBtn };
 }
 
 /**
- * Render a single queued-pin row.
+ * Build the navigate / edit / remove control cluster for a single row.
  *
- * @param pin - Pin to render.
- * @param onNavigate - Invoked on row-body click (navigate).
- * @returns Fresh row element.
+ * @param row - The row element the controls live inside.
+ * @param pin - The pin the controls act on.
+ * @param commentSpan - The span currently rendering the truncated comment.
+ * @param onNavigate - Caller's navigate callback.
+ * @returns The controls wrapper element.
  */
-function buildRow(
+function buildRowControls(
+  row: HTMLElement,
   pin: Pin,
+  commentSpan: HTMLSpanElement,
   onNavigate: (pin: Pin) => void,
 ): HTMLElement {
-  const row = document.createElement('div');
-  row.className = 'queue-row';
-  row.setAttribute('data-pin-id', pin.id);
-  const img = document.createElement('img');
-  img.src = pin.capture.elementScreenshot;
-  img.alt = 'Pin thumbnail';
-  row.appendChild(img);
-  const commentSpan = document.createElement('span');
-  commentSpan.className = 'comment';
-  commentSpan.textContent = truncateComment(pin.comment);
-  commentSpan.addEventListener('click', () => {
-    onNavigate(pin);
-  });
-  row.appendChild(commentSpan);
   const controls = document.createElement('div');
   controls.className = 'controls';
   const navigateBtn = document.createElement('button');
@@ -285,7 +364,37 @@ function buildRow(
   controls.appendChild(navigateBtn);
   controls.appendChild(editBtn);
   controls.appendChild(removeBtn);
-  row.appendChild(controls);
+  return controls;
+}
+
+/**
+ * Render a single queued-pin row.
+ *
+ * @param pin - Pin to render.
+ * @param onNavigate - Invoked on row-body click (navigate).
+ * @returns Fresh row element.
+ */
+function buildRow(
+  pin: Pin,
+  onNavigate: (pin: Pin) => void,
+): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'queue-row';
+  row.setAttribute('data-pin-id', pin.id);
+  const img = document.createElement('img');
+  img.src = pin.capture.elementScreenshot;
+  img.alt = 'Pin thumbnail';
+  row.appendChild(img);
+  const commentSpan = document.createElement('span');
+  commentSpan.className = 'comment';
+  // textContent (not innerHTML) — pin.comment is user-supplied and may
+  // contain HTML-like fragments; escape by inserting as a text node.
+  commentSpan.textContent = truncateComment(pin.comment);
+  commentSpan.addEventListener('click', () => {
+    onNavigate(pin);
+  });
+  row.appendChild(commentSpan);
+  row.appendChild(buildRowControls(row, pin, commentSpan, onNavigate));
   return row;
 }
 
@@ -369,6 +478,42 @@ function renderBatch(
 }
 
 /**
+ * Safely read the persisted collapsed flag. `sessionStorage` can throw in
+ * private-browsing modes or when disabled by policy; in that case we fall
+ * back to the collapsed default.
+ *
+ * When the key is absent or holds a non-"false" value the drawer starts
+ * collapsed (matching the original first-load design). Only an explicit
+ * "false" (= "was expanded last") rehydrates the expanded state.
+ *
+ * @returns `true` when the drawer should start collapsed, `false` otherwise.
+ */
+function readCollapsedFlag(): boolean {
+  try {
+    return window.sessionStorage.getItem(QUEUE_COLLAPSED_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Persist the collapsed flag; swallows storage errors so the panel never
+ * crashes on persistence trouble.
+ *
+ * @param collapsed - Whether the drawer is currently collapsed.
+ */
+function writeCollapsedFlag(collapsed: boolean): void {
+  try {
+    window.sessionStorage.setItem(
+      QUEUE_COLLAPSED_STORAGE_KEY,
+      collapsed ? 'true' : 'false',
+    );
+  } catch {
+    /* no-op — storage disabled or quota-exceeded. */
+  }
+}
+
+/**
  * Build a queue panel, mount it into `opts.shadow`, and wire BatchState
  * subscription + DOM listeners.
  *
@@ -380,13 +525,17 @@ export function createQueuePanel(
 ): QueuePanelHandle {
   const dom = buildPanelDom();
   opts.shadow.appendChild(dom.root);
-  let expanded = false;
+  // Rehydrate the collapsed state from sessionStorage when present. No
+  // stored value defaults to collapsed (= pill-only), matching the
+  // first-load design. `readCollapsedFlag` returns `true` for collapsed.
+  let expanded = !readCollapsedFlag();
   let destroyed = false;
   let lastFocused: Element | null = null;
 
   const applyExpanded = (): void => {
     dom.drawer.setAttribute('data-open', expanded ? 'true' : 'false');
     dom.pill.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    writeCollapsedFlag(!expanded);
   };
 
   const expand = (): void => {
@@ -432,6 +581,10 @@ export function createQueuePanel(
       togglePill();
     }
   });
+  dom.chevron.addEventListener('click', (e) => {
+    e.stopPropagation();
+    collapse();
+  });
   dom.submitBtn.addEventListener('click', () => {
     opts.onSubmitBatch();
   });
@@ -442,6 +595,7 @@ export function createQueuePanel(
   });
   // Initial render with null so the empty state + disabled submit appear.
   renderBatch(dom, null, opts.onNavigateToPin);
+  applyExpanded();
 
   return {
     element: dom.root,
