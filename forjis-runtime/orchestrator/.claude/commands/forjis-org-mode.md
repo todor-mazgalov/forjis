@@ -13,6 +13,8 @@ intelligent, weight-based agent selection using organization configuration.
 
 **Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
+**Pid self-check first.** `state.yaml: running` + live `<task>/pid` on a fresh start point at you. Halt as "another pipeline running" ONLY if the pid is alive AND `!= $$`.
+
 ## Context Variables
 
 Receives from router: TARGET_PROJECT, TASK_ID, TASK_DESCRIPTION (may be empty on
