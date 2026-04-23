@@ -79,6 +79,12 @@ export interface TasksConfig {
   pollIntervalMs: number;
   maxConcurrent?: number;
   autoDependencies: boolean;
+  /**
+   * Optional task rules opt-in block. Undefined means no `tasks.rules`
+   * block was present in the build file (backward compatible — no rules
+   * are applied at orchestrator Step 5b).
+   */
+  rules?: { include: TaskRuleIncludeRef[] };
 }
 
 /** Configuration for the outcome block in build.forjis. */
@@ -104,6 +110,99 @@ export interface OutcomeGroupDef {
   name: string;
   metrics: Record<string, MetricDef>;
   rules: OutcomeRule[];
+}
+
+// -- Task Rule Types --------------------------------------------------------
+
+/**
+ * A role triple identifier of the form `<org>:<team>:<role>`.
+ *
+ * Task rules use this string shape when projects opt into plugin-declared
+ * rules (via `tasks.rules.include` in build.forjis) to name specific roles
+ * whose execution should be suppressed or forced for a matched task.
+ */
+export type RoleTriple = string;
+
+/**
+ * Plugin-declared matcher object for a task rule.
+ *
+ * Each key is a regex string evaluated against the corresponding TASK.md
+ * field. At least one key must be present for a rule to be well-formed.
+ * Evaluation of the regexes themselves is performed by the orchestrator
+ * (Step 5b) against the task's extracted fields; the resolver only
+ * validates the shape of this object.
+ */
+export interface TaskRuleMatchers {
+  /** Regex string tested against the TASK.md H1 title. */
+  task_title?: string;
+  /** Regex string tested against TASK.md body content (reserved; unused by first-cut matcher bank). */
+  task_comment?: string;
+  /** Regex string tested against touched file paths (reserved; unused by first-cut matcher bank). */
+  touches_files?: string;
+}
+
+/**
+ * Plugin-side declaration of a task rule.
+ *
+ * A rule identifies a class of task shapes via `matches` regexes and may
+ * carry per-stage prompt prepends injected into the matched role's prompt
+ * at orchestrator Step 8 (Load Context). Plugin rules MUST NOT reference
+ * project roles — no `skip`/`run` keys and no role-triple literal string
+ * values are permitted anywhere in the rule entry.
+ */
+export interface TaskRuleDef {
+  /** Plugin-unique identifier for the rule (kebab/underscore). */
+  name: string;
+  /** Matcher object; at least one matcher key must be present. */
+  matches: TaskRuleMatchers;
+  /** Optional developer-stage prompt prepend. */
+  developer?: { prompt_prepend: string };
+  /** Optional reviewer-stage prompt prepend. */
+  reviewer?: { prompt_prepend: string };
+}
+
+/**
+ * Build-file include reference opting into a plugin-declared rule.
+ *
+ * After parse validation, exactly one of `skip` or `run` is present; both
+ * or neither raise a validation error. Role triples inside `skip` / `run`
+ * are shape-validated at parse time and existence-checked against the
+ * composed orgs tree later in the post-compose pass.
+ */
+export interface TaskRuleIncludeRef {
+  /** Left side of the `<plugin>:<rule-name>` reference. */
+  pluginName: string;
+  /** Right side of the `<plugin>:<rule-name>` reference. */
+  ruleName: string;
+  /** Role triples to mark as skipped when the rule matches. */
+  skip?: RoleTriple[];
+  /** Role triples to keep running (the complement is skipped). */
+  run?: RoleTriple[];
+  /** Optional YAML source line, used in error messages when available. */
+  sourceLine?: number;
+}
+
+/**
+ * Resolved (writer-side) shape of a task rule.
+ *
+ * After the post-compose pass, every include is normalised into this
+ * shape: `skip` is always an array (never `run`), and `prompt_prepends`
+ * carries the optional per-stage strings verbatim from the plugin.
+ */
+export interface ResolvedTaskRule {
+  /** Rule name (from the plugin definition). */
+  name: string;
+  /** Source plugin name. */
+  plugin: string;
+  /** Matcher object, carried verbatim from the plugin. */
+  matches: TaskRuleMatchers;
+  /** Normalised skip list; always populated, empty array legal. */
+  skip: RoleTriple[];
+  /** Per-stage prompt prepends carried verbatim from the plugin. */
+  prompt_prepends: {
+    developer?: string;
+    reviewer?: string;
+  };
 }
 
 // -- Constraint Types -------------------------------------------------------
@@ -225,6 +324,8 @@ export interface PluginDef {
   metrics: Map<string, MetricDef>;
   /** Constraint groups defined by this plugin. Defaults to empty array. */
   constraints: ConstraintGroup[];
+  /** Task rules defined by this plugin. Defaults to empty array when the plugin omits the `rules:` key. */
+  rules: TaskRuleDef[];
 }
 
 /** Resources that a plugin requires to function. */
@@ -490,6 +591,11 @@ export interface WriterContext {
   previousCache: ChecksumCache | null;
   /** Loaded plugin definitions (used by constraints writer for provenance). */
   plugins: PluginDef[];
+  /**
+   * Resolved task rules in include order (always an array, possibly empty).
+   * Consumed by the task-rules writer to emit `.forjis/config/task-rules.yaml`.
+   */
+  resolvedTaskRules: ResolvedTaskRule[];
 }
 
 /** Result returned by a single config writer. */

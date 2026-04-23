@@ -12,7 +12,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { loadBuildFile, parseBuildFile } from './build-file.js';
 import { readChecksumCache, writeChecksumCache } from './checksum-cache.js';
 import { writePluginLock } from './lock/plugin-lock.js';
-import { composeRuntime, loadPlugins } from './plugin-compositor.js';
+import { composeRuntime, loadPlugins, resolveTaskRuleIncludes } from './plugin-compositor.js';
 import { resolveRepositories } from './repo/index.js';
 import {
   writeConstraintsConfig,
@@ -20,6 +20,7 @@ import {
   writeOrgsConfig,
   writeOutcomesConfig,
   writePersonasConfig,
+  writeTaskRulesConfig,
   writeTasksConfig,
   writeTokenBudgetConfig,
 } from './writers/index.js';
@@ -63,6 +64,7 @@ export async function resolve(
   const pillarPaths = buildConfig.constraints?.pillars ?? [];
   const loadedPillars = await loadPillars(pillarPaths, projectDir);
   const config = composeRuntime(buildConfig, plugins, registry, loadedPillars);
+  const resolvedTaskRules = resolveTaskRuleIncludes(buildConfig, plugins, config.orgs);
 
   const previousCache = await readChecksumCache(projectDir);
   const cacheEntries: Record<string, ChecksumEntry> = {};
@@ -76,6 +78,7 @@ export async function resolve(
     cacheEntries,
     previousCache,
     plugins,
+    resolvedTaskRules,
   };
 
   const results = await runAllWriters(ctx);
@@ -112,7 +115,7 @@ export async function resolve(
 }
 
 /**
- * Runs all seven config writers and collects their results.
+ * Runs all config writers and collects their results.
  *
  * @param ctx - The shared writer context.
  * @returns An array of WriteResult objects from all writers.
@@ -121,6 +124,7 @@ async function runAllWriters(ctx: WriterContext) {
   return [
     await writeOrgsConfig(ctx),
     await writeTasksConfig(ctx),
+    await writeTaskRulesConfig(ctx),
     await writePersonasConfig(ctx),
     await writeOutcomesConfig(ctx),
     await writeConstraintsConfig(ctx),

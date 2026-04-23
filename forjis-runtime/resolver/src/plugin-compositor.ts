@@ -29,13 +29,18 @@ import type {
   PluginRoleDef,
   PluginRequires,
   PluginTeamDef,
+  ResolvedTaskRule,
   RoleDef,
   ResolvedConstraints,
   RoleHooks,
+  RoleTriple,
   RuntimeConfig,
   RuntimeOrg,
   RuntimeRole,
   RuntimeTeam,
+  TaskRuleDef,
+  TaskRuleIncludeRef,
+  TaskRuleMatchers,
   TeamDef,
 } from './types.js';
 
@@ -125,6 +130,7 @@ export function parsePlugin(content: string): PluginDef {
   const outcome = parsePluginOutcome(raw['outcome'], name);
   const metrics = parsePluginMetrics(raw['metrics'], name);
   const constraints = parsePluginConstraints(raw['constraints'], name);
+  const rules = parsePluginRules(raw['rules'], name);
 
   return {
     name,
@@ -136,6 +142,7 @@ export function parsePlugin(content: string): PluginDef {
     outcome,
     metrics,
     constraints,
+    rules,
   };
 }
 
@@ -1273,4 +1280,440 @@ function resolveIncludeRef(
   }
 
   return [group];
+}
+
+// -- Task Rule parsing and resolution ---------------------------------------
+
+/**
+ * Regex matching the role-triple shape `<org>:<team>:<role>` used throughout
+ * plugin validation and build-file validation. Every segment must contain
+ * only alphanumerics, underscore, and hyphen.
+ */
+const TRIPLE_REGEX = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
+
+/** Message raised when a plugin rule references project-role information. */
+const PLUGIN_RULES_NO_ROLES_MSG = 'plugin rules cannot reference project roles';
+
+/** Keys forbidden at any nesting depth within a plugin rule entry. */
+const FORBIDDEN_RULE_KEYS = new Set(['skip', 'run']);
+
+/** Matcher field names permitted inside a plugin rule's `matches:` object. */
+const ALLOWED_MATCHER_FIELDS = new Set<keyof TaskRuleMatchers>([
+  'task_title',
+  'task_comment',
+  'touches_files',
+]);
+
+/** The literal sentinel string used for the collision probe at resolve time. */
+const SENTINEL_TITLE = 'rename x to y';
+
+/**
+ * Parses the top-level `rules:` block of a plugin YAML into TaskRuleDef[].
+ *
+ * Walks every entry, enforcing the forbidden-key rule, the triple-literal
+ * rule, rule-name uniqueness, and matcher-shape validation. Returns `[]`
+ * when the plugin declares no rules block.
+ *
+ * @param raw - The raw YAML value under the top-level `rules:` key.
+ * @param pluginName - The plugin name used in all raised errors.
+ * @returns Validated task rule definitions in declaration order.
+ * @throws {PluginValidationError} When any rule entry fails validation.
+ */
+export function parsePluginRules(raw: unknown, pluginName: string): TaskRuleDef[] {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+
+  if (!Array.isArray(raw)) {
+    throw new PluginValidationError(pluginName, '"rules" must be an array');
+  }
+
+  const result: TaskRuleDef[] = [];
+  const seenNames = new Set<string>();
+
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    const rule = validateRuleEntryShape(entry, pluginName, i);
+    assertNoForbiddenKeysOrTriples(entry as Record<string, unknown>, pluginName, i);
+    assertRuleNameUnique(rule.name, seenNames, pluginName, i);
+    seenNames.add(rule.name);
+    result.push(rule);
+  }
+
+  return result;
+}
+
+/**
+ * Validates a single plugin-rule entry's shape and returns a TaskRuleDef.
+ *
+ * Checks the rule is an object, has a non-empty string `name`, a `matches`
+ * object with at least one allowed matcher field, and at most the optional
+ * `developer` / `reviewer` objects whose only key is a `prompt_prepend`
+ * string.
+ */
+function validateRuleEntryShape(
+  entry: unknown,
+  pluginName: string,
+  index: number
+): TaskRuleDef {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new PluginValidationError(pluginName, `rules[${index}]: must be an object`);
+  }
+  const obj = entry as Record<string, unknown>;
+
+  if (typeof obj['name'] !== 'string' || !obj['name']) {
+    throw new PluginValidationError(pluginName, `rules[${index}]: "name" is required`);
+  }
+  const name = obj['name'];
+
+  const matches = validateRuleMatchers(obj['matches'], pluginName, name, index);
+  const developer = validateRulePromptStage(obj['developer'], pluginName, name, index, 'developer');
+  const reviewer = validateRulePromptStage(obj['reviewer'], pluginName, name, index, 'reviewer');
+
+  const rule: TaskRuleDef = { name, matches };
+  if (developer) rule.developer = developer;
+  if (reviewer) rule.reviewer = reviewer;
+  return rule;
+}
+
+/**
+ * Validates a plugin rule's `matches:` object.
+ *
+ * Requires at least one of the allowed matcher fields, each a string.
+ */
+function validateRuleMatchers(
+  raw: unknown,
+  pluginName: string,
+  ruleName: string,
+  index: number
+): TaskRuleMatchers {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new PluginValidationError(
+      pluginName,
+      `rules[${index}] (name="${ruleName}"): "matches" must be an object`
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  const result: TaskRuleMatchers = {};
+  let populated = 0;
+
+  for (const key of Object.keys(obj)) {
+    if (!ALLOWED_MATCHER_FIELDS.has(key as keyof TaskRuleMatchers)) {
+      throw new PluginValidationError(
+        pluginName,
+        `rules[${index}] (name="${ruleName}"): matches.${key} is not a recognised matcher field`
+      );
+    }
+    const value = obj[key];
+    if (typeof value !== 'string' || value === '') {
+      throw new PluginValidationError(
+        pluginName,
+        `rules[${index}] (name="${ruleName}"): matches.${key} must be a non-empty regex string`
+      );
+    }
+    result[key as keyof TaskRuleMatchers] = value;
+    populated += 1;
+  }
+
+  if (populated === 0) {
+    throw new PluginValidationError(
+      pluginName,
+      `rules[${index}] (name="${ruleName}"): "matches" must declare at least one matcher`
+    );
+  }
+  return result;
+}
+
+/**
+ * Validates a plugin rule's optional `developer:` / `reviewer:` stage
+ * object, which must only carry a non-empty `prompt_prepend` string.
+ */
+function validateRulePromptStage(
+  raw: unknown,
+  pluginName: string,
+  ruleName: string,
+  index: number,
+  stage: 'developer' | 'reviewer'
+): { prompt_prepend: string } | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new PluginValidationError(
+      pluginName,
+      `rules[${index}] (name="${ruleName}"): "${stage}" must be an object`
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  const allowed = new Set(['prompt_prepend']);
+  for (const key of Object.keys(obj)) {
+    if (!allowed.has(key) && !FORBIDDEN_RULE_KEYS.has(key)) {
+      throw new PluginValidationError(
+        pluginName,
+        `rules[${index}] (name="${ruleName}"): ${stage}.${key} is not a recognised field`
+      );
+    }
+  }
+  const prompt = obj['prompt_prepend'];
+  if (typeof prompt !== 'string' || prompt === '') {
+    throw new PluginValidationError(
+      pluginName,
+      `rules[${index}] (name="${ruleName}"): ${stage}.prompt_prepend must be a non-empty string`
+    );
+  }
+  return { prompt_prepend: prompt };
+}
+
+/**
+ * Walks a rule entry tree looking for forbidden keys (`skip`, `run`) at
+ * any depth and for role-triple literals in any string value at any depth.
+ * Raises `PluginValidationError` with the fixed message on the first
+ * offender found.
+ */
+function assertNoForbiddenKeysOrTriples(
+  entry: Record<string, unknown>,
+  pluginName: string,
+  index: number
+): void {
+  const visit = (node: unknown): void => {
+    if (node === null || node === undefined) return;
+    if (typeof node === 'string') {
+      if (TRIPLE_REGEX.test(node)) {
+        throw new PluginValidationError(
+          pluginName,
+          `rules[${index}]: ${PLUGIN_RULES_NO_ROLES_MSG} (found triple literal "${node}")`
+        );
+      }
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    if (typeof node === 'object') {
+      const obj = node as Record<string, unknown>;
+      for (const key of Object.keys(obj)) {
+        if (FORBIDDEN_RULE_KEYS.has(key)) {
+          throw new PluginValidationError(
+            pluginName,
+            `rules[${index}]: ${PLUGIN_RULES_NO_ROLES_MSG} (found forbidden key "${key}")`
+          );
+        }
+        visit(obj[key]);
+      }
+    }
+  };
+  visit(entry);
+}
+
+/** Raises a `PluginValidationError` when a rule name repeats within a plugin. */
+function assertRuleNameUnique(
+  name: string,
+  seen: Set<string>,
+  pluginName: string,
+  index: number
+): void {
+  if (seen.has(name)) {
+    throw new PluginValidationError(
+      pluginName,
+      `rules[${index}]: duplicate rule name "${name}"`
+    );
+  }
+}
+
+/**
+ * Post-compose pass that resolves every `tasks.rules.include` entry against
+ * the loaded plugin inventory and composed orgs tree.
+ *
+ * For each include the pass:
+ *   1. Looks up the plugin by name.
+ *   2. Finds the rule by name inside the plugin.
+ *   3. Validates every role triple in `skip` / `run` against the composed
+ *      orgs tree.
+ *   4. Rewrites any `run` list into the canonical complement
+ *      `skip = all_roles \ run`.
+ *
+ * After all includes are resolved, runs the sentinel collision probe over
+ * every pair of rules' `task_title` regexes and raises a `ResolverError`
+ * when two rules both match the fixed literal `"rename x to y"`.
+ *
+ * @param buildConfig - The parsed build configuration.
+ * @param plugins - Loaded plugin definitions (searched for rule bodies).
+ * @param composedOrgs - The fully composed runtime-orgs tree, used to
+ *   enumerate `all_roles` and to validate triple existence.
+ * @returns Resolved task rules in include order (may be empty).
+ * @throws {ResolverError} When any include references a missing plugin,
+ *   missing rule, or unknown role triple, or when two matched rules
+ *   collide on the sentinel string.
+ */
+export function resolveTaskRuleIncludes(
+  buildConfig: BuildConfig,
+  plugins: PluginDef[],
+  composedOrgs: RuntimeOrg[]
+): ResolvedTaskRule[] {
+  const includes = buildConfig.tasks?.rules?.include ?? [];
+  if (includes.length === 0) {
+    return [];
+  }
+
+  const allRoles = enumerateAllRoles(composedOrgs);
+  const allRolesSet = new Set(allRoles);
+
+  const resolved: ResolvedTaskRule[] = [];
+  for (const ref of includes) {
+    const plugin = findPluginByName(ref, plugins);
+    const rule = findRuleOrThrow(plugin, ref);
+    validateIncludeTriples(ref, allRolesSet);
+    const skip = computeSkipList(ref, allRoles);
+    resolved.push(buildResolvedTaskRule(plugin, rule, skip));
+  }
+
+  assertNoSentinelCollision(resolved);
+
+  return resolved;
+}
+
+/**
+ * Enumerates every role triple from a composed orgs tree as
+ * `<org>:<team>:<role>` strings in tree traversal order.
+ */
+function enumerateAllRoles(orgs: RuntimeOrg[]): RoleTriple[] {
+  const result: RoleTriple[] = [];
+  for (const org of orgs) {
+    for (const team of org.teams) {
+      for (const role of team.roles) {
+        result.push(`${org.name}:${team.name}:${role.name}`);
+      }
+    }
+  }
+  return result;
+}
+
+/** Looks up a plugin by name for an include reference. */
+function findPluginByName(
+  ref: TaskRuleIncludeRef,
+  plugins: PluginDef[]
+): PluginDef {
+  const plugin = plugins.find(p => p.name === ref.pluginName);
+  if (!plugin) {
+    const loc = ref.sourceLine ? ` (line ${ref.sourceLine})` : '';
+    throw new ResolverError(
+      `tasks.rules.include: plugin "${ref.pluginName}" not found for rule "${ref.pluginName}:${ref.ruleName}"${loc}`
+    );
+  }
+  return plugin;
+}
+
+/** Finds the named rule inside a plugin, raising when absent. */
+function findRuleOrThrow(
+  plugin: PluginDef,
+  ref: TaskRuleIncludeRef
+): TaskRuleDef {
+  const rule = plugin.rules.find(r => r.name === ref.ruleName);
+  if (!rule) {
+    const loc = ref.sourceLine ? ` (line ${ref.sourceLine})` : '';
+    throw new ResolverError(
+      `tasks.rules.include: rule "${ref.ruleName}" not found in plugin "${ref.pluginName}"${loc}`
+    );
+  }
+  return rule;
+}
+
+/**
+ * Validates every triple in a single include's `skip` / `run` list against
+ * the enumerated set of composed-orgs role triples.
+ */
+function validateIncludeTriples(
+  ref: TaskRuleIncludeRef,
+  allRolesSet: Set<RoleTriple>
+): void {
+  const triples: RoleTriple[] = ref.skip ?? ref.run ?? [];
+  for (const triple of triples) {
+    if (!allRolesSet.has(triple)) {
+      const loc = ref.sourceLine ? ` (line ${ref.sourceLine})` : '';
+      throw new ResolverError(
+        `tasks.rules.include: role triple "${triple}" is not in the composed orgs tree for rule "${ref.pluginName}:${ref.ruleName}"${loc}`
+      );
+    }
+  }
+}
+
+/**
+ * Produces the canonical skip list for an include entry.
+ *
+ * When `skip` is present, returns it as-is. When `run` is present, computes
+ * `all_roles \ run` preserving the enumeration order of `all_roles`.
+ */
+function computeSkipList(
+  ref: TaskRuleIncludeRef,
+  allRoles: RoleTriple[]
+): RoleTriple[] {
+  if (ref.skip !== undefined) {
+    return [...ref.skip];
+  }
+  const runSet = new Set(ref.run ?? []);
+  return allRoles.filter(triple => !runSet.has(triple));
+}
+
+/** Assembles a ResolvedTaskRule from a plugin rule plus its include's skip. */
+function buildResolvedTaskRule(
+  plugin: PluginDef,
+  rule: TaskRuleDef,
+  skip: RoleTriple[]
+): ResolvedTaskRule {
+  const promptPrepends: ResolvedTaskRule['prompt_prepends'] = {};
+  if (rule.developer) promptPrepends.developer = rule.developer.prompt_prepend;
+  if (rule.reviewer) promptPrepends.reviewer = rule.reviewer.prompt_prepend;
+
+  return {
+    name: rule.name,
+    plugin: plugin.name,
+    matches: { ...rule.matches },
+    skip,
+    prompt_prepends: promptPrepends,
+  };
+}
+
+/**
+ * Runs the sentinel collision probe over every pair of resolved rules.
+ *
+ * Compiles each rule's `matches.task_title` regex (when present) and tests
+ * it against the literal string `"rename x to y"`. When two rules both
+ * match, raises a `ResolverError` identifying both colliders.
+ *
+ * Rules without a `task_title` matcher are skipped by the probe.
+ */
+function assertNoSentinelCollision(resolved: ResolvedTaskRule[]): void {
+  const entries: { id: string; regex: RegExp }[] = [];
+  for (const rule of resolved) {
+    const pattern = rule.matches.task_title;
+    if (!pattern) continue;
+    const compiled = safeCompileSentinelProbe(rule, pattern);
+    entries.push({ id: `${rule.plugin}:${rule.name}`, regex: compiled });
+  }
+
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      if (entries[i].regex.test(SENTINEL_TITLE) && entries[j].regex.test(SENTINEL_TITLE)) {
+        throw new ResolverError(
+          `tasks.rules.include: sentinel collision on "${SENTINEL_TITLE}" — rules "${entries[i].id}" and "${entries[j].id}" both match`
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Compiles a rule's `task_title` regex for the sentinel probe, wrapping
+ * compilation failures in a resolver error that names the offending rule.
+ */
+function safeCompileSentinelProbe(rule: ResolvedTaskRule, pattern: string): RegExp {
+  try {
+    return new RegExp(pattern);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new ResolverError(
+      `tasks.rules.include: rule "${rule.plugin}:${rule.name}" has an invalid task_title regex "${pattern}": ${msg}`
+    );
+  }
 }
