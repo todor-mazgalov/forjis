@@ -28,6 +28,8 @@ import type {
   PluginRef,
   RoleDef,
   RoleHooks,
+  RoleTriple,
+  TaskRuleIncludeRef,
   TasksConfig,
   TeamDef,
   TokenBudgetConfig,
@@ -510,7 +512,172 @@ function validateTasks(tasks: unknown, errors: string[]): TasksConfig | null {
     config.autoDependencies = Boolean(raw['auto_dependencies']);
   }
 
+  if (raw['rules'] !== undefined) {
+    const rules = validateTaskRules(raw['rules'], errors);
+    if (rules !== null) {
+      config.rules = rules;
+    }
+  }
+
   return config;
+}
+
+/** Regex for rule references `<plugin>:<rule-name>` — no wildcard alternation. */
+const RULE_INCLUDE_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
+
+/** Regex for shape-validating role triples `<org>:<team>:<role>`. */
+const ROLE_TRIPLE_PATTERN = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
+
+/**
+ * Validates the optional `tasks.rules` block and its `include:` array.
+ *
+ * Each entry carries `rule: "<plugin>:<rule-name>"` plus exactly one of
+ * `skip:` or `run:` (both or neither is invalid). Every triple in
+ * `skip` / `run` is shape-validated against `ROLE_TRIPLE_PATTERN` at
+ * parse time; triple existence against the composed orgs tree is
+ * verified later by `resolveTaskRuleIncludes`.
+ *
+ * @param raw - Raw value found under `tasks.rules` in the YAML tree.
+ * @param errors - Mutable accumulator for user-visible validation errors.
+ * @returns The parsed block, or null when parsing failed.
+ */
+function validateTaskRules(
+  raw: unknown,
+  errors: string[]
+): { include: TaskRuleIncludeRef[] } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    errors.push('tasks.rules: must be an object with an "include" array');
+    return null;
+  }
+  const obj = raw as Record<string, unknown>;
+  if (!('include' in obj)) {
+    errors.push('tasks.rules: requires an "include" array');
+    return null;
+  }
+  if (!Array.isArray(obj['include'])) {
+    errors.push('tasks.rules.include: must be an array');
+    return null;
+  }
+
+  const include: TaskRuleIncludeRef[] = [];
+  for (let i = 0; i < obj['include'].length; i++) {
+    const parsed = validateTaskRuleInclude(obj['include'][i], i, errors);
+    if (parsed) {
+      include.push(parsed);
+    }
+  }
+  return { include };
+}
+
+/**
+ * Validates a single `tasks.rules.include[i]` entry.
+ *
+ * Returns a well-formed `TaskRuleIncludeRef` or null when any error was
+ * accumulated for this entry.
+ */
+function validateTaskRuleInclude(
+  rawEntry: unknown,
+  index: number,
+  errors: string[]
+): TaskRuleIncludeRef | null {
+  const prefix = `tasks.rules.include[${index}]`;
+  if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+    errors.push(`${prefix}: must be an object`);
+    return null;
+  }
+  const entry = rawEntry as Record<string, unknown>;
+
+  const reference = parseRuleReferenceField(entry, prefix, errors);
+  const triples = validateSkipRunExclusive(entry, prefix, errors);
+  if (!reference || !triples) {
+    return null;
+  }
+
+  const result: TaskRuleIncludeRef = {
+    pluginName: reference.pluginName,
+    ruleName: reference.ruleName,
+  };
+  if (triples.kind === 'skip') {
+    result.skip = triples.values;
+  } else {
+    result.run = triples.values;
+  }
+  return result;
+}
+
+/**
+ * Parses the `rule:` field of a single include entry and splits it into
+ * `{ pluginName, ruleName }`. Returns null on shape violation.
+ */
+function parseRuleReferenceField(
+  entry: Record<string, unknown>,
+  prefix: string,
+  errors: string[]
+): { pluginName: string; ruleName: string } | null {
+  const rule = entry['rule'];
+  if (typeof rule !== 'string' || !rule) {
+    errors.push(`${prefix}: "rule" must be a non-empty string`);
+    return null;
+  }
+  if (!RULE_INCLUDE_PATTERN.test(rule)) {
+    if (rule.includes('*')) {
+      errors.push(`${prefix}.rule: invalid reference "${rule}" — wildcards are not supported for rule references`);
+    } else {
+      errors.push(`${prefix}.rule: invalid reference "${rule}" — expected "<plugin>:<rule-name>"`);
+    }
+    return null;
+  }
+  const colonIdx = rule.indexOf(':');
+  return { pluginName: rule.substring(0, colonIdx), ruleName: rule.substring(colonIdx + 1) };
+}
+
+/**
+ * Enforces `skip` XOR `run` on one include entry and validates every
+ * triple's shape. Returns the kind and values, or null on any error.
+ */
+function validateSkipRunExclusive(
+  entry: Record<string, unknown>,
+  prefix: string,
+  errors: string[]
+): { kind: 'skip' | 'run'; values: RoleTriple[] } | null {
+  const hasSkip = 'skip' in entry;
+  const hasRun = 'run' in entry;
+
+  if (hasSkip && hasRun) {
+    errors.push(
+      `${prefix}: "skip" and "run" are mutually exclusive — specify exactly one`
+    );
+    return null;
+  }
+  if (!hasSkip && !hasRun) {
+    errors.push(
+      `${prefix}: requires exactly one of "skip" or "run" (use "skip: []" to skip no roles)`
+    );
+    return null;
+  }
+
+  const kind: 'skip' | 'run' = hasSkip ? 'skip' : 'run';
+  const rawList = entry[kind];
+  if (!Array.isArray(rawList)) {
+    errors.push(`${prefix}.${kind}: must be an array of role triples`);
+    return null;
+  }
+
+  const values: RoleTriple[] = [];
+  let anyInvalid = false;
+  for (let i = 0; i < rawList.length; i++) {
+    const triple = rawList[i];
+    if (typeof triple !== 'string' || !ROLE_TRIPLE_PATTERN.test(triple)) {
+      errors.push(
+        `${prefix}.${kind}[${i}]: "${String(triple)}" is not a valid role triple "<org>:<team>:<role>"`
+      );
+      anyInvalid = true;
+      continue;
+    }
+    values.push(triple);
+  }
+  if (anyInvalid) return null;
+  return { kind, values };
 }
 
 /**

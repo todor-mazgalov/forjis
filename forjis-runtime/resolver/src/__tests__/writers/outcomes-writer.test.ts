@@ -121,6 +121,7 @@ describe('writeOutcomesConfig', () => {
       },
       metrics: new Map(),
       constraints: [],
+      rules: [],
     };
     ctx.plugins = [plugin];
 
@@ -194,6 +195,7 @@ describe('writeOutcomesConfig', () => {
       },
       metrics: new Map(),
       constraints: [],
+      rules: [],
     };
     ctx.plugins = [plugin];
 

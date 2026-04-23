@@ -35,6 +35,7 @@ describe('writePluginLock', () => {
       outcome: null,
       metrics: new Map(),
       constraints: [],
+      rules: [],
     };
   }
 

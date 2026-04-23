@@ -60,6 +60,7 @@ async function setupMinimalProject(projectDir: string): Promise<string> {
 const EXPECTED_CONFIG_FILES = [
   'orgs.yaml',
   'tasks.yaml',
+  'task-rules.yaml',
   'personas.yaml',
   'outcomes.yaml',
   'constraints.yaml',
@@ -111,7 +112,7 @@ describe('resolve() — full pipeline', () => {
   });
 
   // QA 13.1 (continued): All 7 file names appear in generated on first run
-  it('happy path: all 7 config file names appear in generated on first run', async () => {
+  it('happy path: all 8 config file names appear in generated on first run', async () => {
     const buildPath = await setupMinimalProject(tmpDir);
 
     const result: ConfigResult = await resolve(buildPath, { projectDir: tmpDir });
@@ -123,7 +124,7 @@ describe('resolve() — full pipeline', () => {
   });
 
   // QA 13.2: All 7 config files exist on disk after resolve()
-  it('all 7 config files exist on disk after resolve()', async () => {
+  it('all 8 config files exist on disk after resolve()', async () => {
     const buildPath = await setupMinimalProject(tmpDir);
 
     await resolve(buildPath, { projectDir: tmpDir });

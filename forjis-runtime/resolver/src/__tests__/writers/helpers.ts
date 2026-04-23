@@ -43,6 +43,7 @@ export function createTestContext(
     cacheEntries: {},
     previousCache,
     plugins: [],
+    resolvedTaskRules: [],
   };
 }
 

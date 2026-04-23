@@ -12,7 +12,7 @@ export { resolve } from './resolve.js';
 export { loadBuildFile, parseBuildFile, parseDuration, formatDuration } from './build-file.js';
 
 // Plugin loading and composition
-export { loadPlugins, parsePlugin, composeRuntime, verifyPluginDependencies } from './plugin-compositor.js';
+export { loadPlugins, parsePlugin, parsePluginRules, composeRuntime, resolveTaskRuleIncludes, verifyPluginDependencies } from './plugin-compositor.js';
 export type { LoadedPlugins } from './plugin-compositor.js';
 
 // Resource resolution

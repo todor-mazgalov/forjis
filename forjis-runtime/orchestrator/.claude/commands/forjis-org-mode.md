@@ -13,7 +13,7 @@ intelligent, weight-based agent selection using organization configuration.
 
 **Use the `Read` tool** to load `.claude/skills/forjis-workflow/SKILL.md` for the full workflow protocol, then activate it via the `Skill` tool with `skill: "forjis-workflow"`.
 
-**Pid self-check first.** `state.yaml: running` + live `<task>/pid` on a fresh start point at you. Halt as "another pipeline running" ONLY if the pid is alive AND `!= $$`.
+**Do not police your own lifecycle.** The facilitator manages `state.yaml` and `<task>/pid`; do NOT halt based on them. If you were spawned, proceed.
 
 ## Context Variables
 
@@ -259,9 +259,109 @@ sha256sum .forjis/config/orgs.yaml 2>/dev/null || openssl dgst -sha256 .forjis/c
 from scratch. Already-completed agents (artifacts with valid status markers) are treated
 as done regardless of new weight. New roles follow normal evaluation. Removed roles are ignored.
 
+
+## Step 5b: Apply task rule
+
+After weight evaluation finishes writing the decision table, read the
+resolved task-rules inventory and apply the first matching rule. Task
+rules are a pipeline preprocessor that lets plugins describe micro-task
+shapes (e.g. one-line renames, dependency bumps) and lets projects opt
+in per role so the stages that have nothing to do can be cleanly skipped.
+
+### Procedure
+
+1. **Read the resolved rules.** Read `.forjis/config/task-rules.yaml`.
+   The file is always present (the resolver emits at minimum
+   `{ version: 1, rules: [] }`). The `rules:` array is already in
+   include order — order is significant because matching is
+   **first-match-wins**.
+
+   - If `rules:` is an empty list, log the no-match line and jump
+     straight to Step 5c without touching the decision table:
+     `[orchestrator]: no task rule matched — default pipeline`
+
+2. **Extract task fields from `TASK.md`.** Open the task's
+   `.forjis/tasks/<TASK_ID>/TASK.md` file once and split it into two
+   fields that matchers reference:
+
+   - `task_title` — the first line that begins with `# ` (a literal
+     hash followed by a space), with that `# ` prefix stripped. If no
+     H1 exists, treat `task_title` as the empty string.
+   - `task_comment` — every other line in the file (everything after
+     the first H1 line). Treat `task_comment` as the empty string when
+     there is no body.
+
+   These two extracted strings are the only inputs passed to matchers
+   in this cut; `touches_files` is reserved for a future pass.
+
+3. **Iterate rules first-match-wins.** For each entry in `rules:` in
+   order:
+
+   a. Inspect the rule's `matches:` object. Only the matcher keys the
+      rule actually declares participate in the evaluation.
+   b. For each declared matcher key, compile the regex value and test
+      it against the corresponding task field (`task_title` for
+      `matches.task_title`, `task_comment` for `matches.task_comment`).
+   c. The rule is considered a match **only when every declared
+      matcher passes** (logical AND across keys). A rule that declares
+      no matchers at all cannot appear here — the resolver rejects
+      that shape at build time.
+   d. Stop at the first rule whose matchers all pass. No further rules
+      are evaluated for this task.
+
+   **Worked example.**
+
+   ```yaml
+   # task-rules.yaml
+   version: 1
+   rules:
+     - name: text-rename
+       plugin: software-dev
+       matches:
+         task_title: "^(rename|change) .+ (to|from) "
+       skip:
+         - playground:Frontend:Explorer
+         - playground:Frontend:Analyst
+       prompt_prepends:
+         developer: "Single-edit rename. Do not restructure."
+   ```
+
+   Task H1: `# Rename "Foo" to "Bar"`. After extraction,
+   `task_title = 'Rename "Foo" to "Bar"'`. Testing it against the
+   regex `^(rename|change) .+ (to|from) ` (case-insensitive at the
+   model's discretion) matches → the `text-rename` rule wins.
+
+4. **Apply the match.** For the matched rule (if any):
+
+   a. For every triple in the rule's `skip:` list (which the resolver
+      has already normalised from any `run:` form), find the
+      corresponding row in the in-memory decision table and set:
+      - `status: skipped`
+      - `justification: rule:<rule-name>` (e.g. `rule:text-rename`)
+   b. Attach the rule's `prompt_prepends.developer` and
+      `prompt_prepends.reviewer` strings (when present) onto the
+      matching decision-table rows so Step 8 can inject them into the
+      corresponding agent prompts.
+   c. Emit the match log line, listing the skipped triples in the
+      order they appear in the rule's `skip:` list:
+      `[orchestrator]: task rule matched — <plugin>:<name> (skipped: <triple>, <triple>, ...)`
+
+5. **No match.** If the iteration completes without any rule applying,
+   leave the decision table unchanged and log:
+   `[orchestrator]: no task rule matched — default pipeline`
+
+### Log lines (exact forms)
+
+Step 5b emits **exactly one** of the following two lines per task:
+
+- On match: `[orchestrator]: task rule matched — <plugin>:<name> (skipped: <comma-separated-role-triples>)`
+- On no match: `[orchestrator]: no task rule matched — default pipeline`
+
+No additional per-rule diagnostic lines are emitted from this step.
+
 ## Step 5c: Exploration Cache Check
 
-This step runs ONLY when the Explorer role has weight >= 70 (decision: RUN) and is not overridden by `--exclude`.
+This step runs ONLY when the Explorer role has weight >= 70 (decision: RUN), is not overridden by `--exclude`, **and** is not already marked `status: skipped` in the decision table (a Step 5b rule-driven skip must suppress this cache check — R-003).
 
 ### Procedure
 
@@ -427,10 +527,6 @@ finish, and re-evaluate any new roles. Preserve existing `branches` data.
 
 ## Step 7: Resume Detection
 
-**Pid self-check.** `state.yaml: running` + live `<task>/pid` on a fresh
-start are you. Halt as "another pipeline running" only when the pid is
-alive AND `!= $$`.
-
 **Precondition — weights must exist.** Before evaluating artifacts, confirm
 `<TARGET_PROJECT>/.forjis/tasks/<TASK_ID>/weights.yaml` exists and lists at least
 one role with `decision: RUN`. If the file is missing or has zero RUN roles, Step 5
@@ -471,6 +567,12 @@ Print: `[<RoleName>]: starting (<agent-file>)...`
 4. Read hook files (pre, post, validation) directly from their absolute paths in orgs.yaml
 5. Compose agent invocation:
    - Agent prompt as base
+   - **Task rule `prompt_prepend`** for this role (if Step 5b attached a
+     `prompt_prepends.developer` / `prompt_prepends.reviewer` string to
+     this decision-table row) injected immediately after the agent base
+     prompt and **before** pre-hooks. This keeps pre-hooks as the
+     dominant pre-execution layer and honours the constraint-precedence
+     order.
    - Pre hook content prepended as "Pre-execution instructions"
    - Skill content injected
    - Expertise injected
