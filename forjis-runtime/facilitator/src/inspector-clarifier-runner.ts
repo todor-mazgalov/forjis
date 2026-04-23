@@ -459,12 +459,22 @@ export class InspectorClarifierRunner {
    * lines are dropped silently with a diagnostic warning (matches the
    * clarifier persona's "Output contract").
    *
+   * Emits an unconditional `[clarifier]: run <batchId> engine event
+   * type=<type>` log for every inbound event — before the
+   * assistant-only filter — so operators can observe whether the
+   * subprocess is producing any stream events at all (the
+   * inspector-019 failure mode was complete silence after the initial
+   * spawn log).
+   *
    * @param batchId - Identifier of the run the event belongs to.
    * @param event - Parsed stream event from the engine.
    */
   private ingestEngineEvent(batchId: string, event: TaskEvent): void {
     const run = this.runs.get(batchId);
     if (!run) return;
+    console.log(
+      `[clarifier]: run ${batchId} engine event type=${event.type}`,
+    );
     if (!run.firstEngineEventLogged) {
       run.firstEngineEventLogged = true;
       console.log(

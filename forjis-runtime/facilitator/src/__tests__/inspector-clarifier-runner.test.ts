@@ -20,6 +20,7 @@
  * a real Claude CLI.
  */
 
+import { jest } from '@jest/globals';
 import { mkdtemp, rm, writeFile, readFile, stat, readdir, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -880,6 +881,80 @@ describe('InspectorClarifierRunner — initial user turn delivered to engine', (
       // can render it as the system prompt.
       expect(modeArgs!.personaBody).toBe('# Clarifier body');
     } finally {
+      await cleanup(h);
+    }
+  });
+});
+
+describe('InspectorClarifierRunner — ingestEngineEvent observes every event type (inspector-019)', () => {
+  /**
+   * Inspector 019 diagnosis required an unconditional log of every
+   * engine event the runner sees, so operators can tell whether a
+   * silent clarifier subprocess is producing system/user/result events
+   * or truly nothing at all.
+   *
+   * This test drives the runner's `onEvent` callback with a sequence
+   * of non-assistant events ('system', 'user', 'result') plus one
+   * assistant event, captures stdout, and asserts the runner logged
+   * a `[clarifier]: run <batchId> engine event type=<type>` line for
+   * every event — not just the assistant one.
+   */
+  it('logs every engine event type the subprocess delivers', async () => {
+    const h = await buildHarness();
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {
+      /* swallow */
+    });
+    try {
+      const batchId = 'batch-every-event';
+      const batch = await seedBatch(h, batchId, 1);
+
+      h.service.emit('batch.submitted', { batch });
+      await waitFor(() => h.engine.invocations.length === 1);
+
+      const invocation = h.engine.invocations[0];
+      const send = invocation.onEvent!;
+
+      send({
+        timestamp: new Date().toISOString(),
+        type: 'system',
+        role: 'orchestrator',
+        content: '[SYSTEM] session=abc',
+      });
+      send({
+        timestamp: new Date().toISOString(),
+        type: 'user',
+        role: 'orchestrator',
+        content: '[TOOL_RESULT] ...',
+      });
+      send({
+        timestamp: new Date().toISOString(),
+        type: 'assistant',
+        role: 'orchestrator',
+        content: '[THINK] not-json-but-valid-event...',
+      });
+      send({
+        timestamp: new Date().toISOString(),
+        type: 'result',
+        role: 'orchestrator',
+        content: '[DONE] turns=3 ok=true',
+      });
+
+      // Collect all `[clarifier]: run ... engine event type=...` lines.
+      const eventTypeLogs = logSpy.mock.calls
+        .map((args) => String(args[0] ?? ''))
+        .filter((line) =>
+          line.startsWith(`[clarifier]: run ${batchId} engine event type=`),
+        );
+
+      // One log line per inbound event — including the non-assistant
+      // types the old code ignored.
+      expect(eventTypeLogs).toHaveLength(4);
+      expect(eventTypeLogs[0]).toContain('type=system');
+      expect(eventTypeLogs[1]).toContain('type=user');
+      expect(eventTypeLogs[2]).toContain('type=assistant');
+      expect(eventTypeLogs[3]).toContain('type=result');
+    } finally {
+      logSpy.mockRestore();
       await cleanup(h);
     }
   });

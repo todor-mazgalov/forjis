@@ -197,6 +197,14 @@ export class ClaudeEngine implements ForjisEngine {
    * Used for simple LLM calls that don't need the full orchestrator.
    * Handles Windows shell quoting and cross-platform spawning.
    *
+   * When `options.keepStdinOpen` is `true` the engine switches the CLI to
+   * `--input-format stream-json`: the default `text` input format blocks
+   * the CLI until EOF on stdin, which never arrives when subsequent
+   * user turns will be injected via {@link onUserMessage}. In stream-json
+   * input mode each user turn is a self-contained JSONL envelope so the
+   * CLI starts processing the first prompt immediately without waiting
+   * for EOF.
+   *
    * @param text - The prompt text to send.
    * @param options - Prompt config options.
    * @returns The Claude CLI's text response.
@@ -214,6 +222,9 @@ export class ClaudeEngine implements ForjisEngine {
         args.push(normalizedProjectDir);
       }
       args.push('-p', '--verbose', '--output-format', 'stream-json');
+      if (options.keepStdinOpen) {
+        args.push('--input-format', 'stream-json');
+      }
       if (options.maxTurns !== undefined) {
         args.push('--max-turns', String(options.maxTurns));
       }
@@ -231,6 +242,15 @@ export class ClaudeEngine implements ForjisEngine {
       }
       const child = this.spawnChild('claude', args, childOptions);
 
+      const isInspectorClarify = options.id !== undefined && options.keepStdinOpen === true;
+      if (isInspectorClarify) {
+        console.log(
+          `[engine]: inspector-clarify spawn — arg-count=${args.length}, ` +
+          `prompt-bytes=${text.length}, keepStdinOpen=true, ` +
+          `input-format=stream-json, output-format=stream-json`,
+        );
+      }
+
       let pidFilePath: string;
       if (options.id && options.projectDir) {
         pidFilePath = join(options.projectDir, '.forjis', 'tasks', options.id, 'pid');
@@ -245,8 +265,10 @@ export class ClaudeEngine implements ForjisEngine {
         this.activeChildren.set(options.id, child);
       }
 
-      child.stdin.write(text);
-      if (!options.keepStdinOpen) {
+      if (options.keepStdinOpen) {
+        child.stdin.write(encodeStreamJsonUserTurn(text));
+      } else {
+        child.stdin.write(text);
         child.stdin.end();
       }
 
@@ -316,9 +338,18 @@ export class ClaudeEngine implements ForjisEngine {
 
       armWatchdog();
 
+      let chunkCounter = 0;
       child.stdout.on("data", chunk => {
         armWatchdog();
-        this.parseOutput(chunk, options.onEvent, 'stdout', options.returnOutput ? (text) => { resultText = text; } : undefined, options.ctx);
+        if (isInspectorClarify && process.env['FORJIS_INSPECTOR_DEBUG'] === '1') {
+          chunkCounter += 1;
+          const raw = chunk.toString('utf-8');
+          const preview = raw.slice(0, 120).replace(/\n/g, '\\n');
+          console.log(
+            `[engine]: inspector-clarify chunk ${chunkCounter} bytes=${raw.length}: ${preview}`,
+          );
+        }
+        this.parseOutput(chunk, options.onEvent, 'stdout', options.returnOutput ? (text) => { resultText = text; } : undefined, options.ctx, isInspectorClarify);
       });
 
       child.stderr.on("data", chunk => {
@@ -454,9 +485,11 @@ export class ClaudeEngine implements ForjisEngine {
    *
    * Looks up the live child handle in {@link activeChildren}; when absent
    * rejects with an {@link EngineCapabilityError} naming the missing
-   * subprocess. Otherwise writes `text` plus a trailing newline to the
-   * child's stdin so the Claude CLI's line-delimited parser treats it as
-   * a fresh user turn.
+   * subprocess. Otherwise writes a stream-json user envelope to the
+   * child's stdin — the same JSONL shape produced by
+   * {@link encodeStreamJsonUserTurn} for the initial prompt. The Claude
+   * CLI's stream-json input parser treats each envelope as a fresh user
+   * turn; the trailing newline terminates the JSONL record.
    *
    * The subprocess's stdin must have been opened with `keepStdinOpen:
    * true` at spawn time for this call to succeed; the inspector-clarify
@@ -464,8 +497,7 @@ export class ClaudeEngine implements ForjisEngine {
    * {@link spawnClaude}.
    *
    * @param taskId - Identifier matching the live subprocess's invocation id.
-   * @param text - Payload appended as a new user turn. A trailing newline
-   *   is added automatically.
+   * @param text - Payload appended as a new user turn.
    * @throws {EngineCapabilityError} When no subprocess is running for
    *   `taskId`, or when the subprocess's stdin has already been closed.
    */
@@ -485,7 +517,7 @@ export class ClaudeEngine implements ForjisEngine {
         `stdin closed for task "${taskId}"`,
       );
     }
-    child.stdin.write(`${text}\n`);
+    child.stdin.write(encodeStreamJsonUserTurn(text));
   }
 
   /**
@@ -500,6 +532,9 @@ export class ClaudeEngine implements ForjisEngine {
    * @param stream - Which process stream produced this chunk.
    * @param onResult - Optional callback for result text.
    * @param ctx - Per-invocation context; when provided, enables token tracking and role detection.
+   * @param inspectorClarify - True when the current subprocess is the
+   *   inspector-clarify runner; enables the per-event debug log gated
+   *   behind `FORJIS_INSPECTOR_DEBUG=1`.
    * @returns The raw output string.
    */
   private parseOutput(
@@ -508,6 +543,7 @@ export class ClaudeEngine implements ForjisEngine {
     stream?: 'stdout' | 'stderr',
     onResult?: (text: string) => void,
     ctx?: InvocationContext,
+    inspectorClarify = false,
   ) {
     const output = chunk.toString("utf-8");
 
@@ -563,6 +599,11 @@ export class ClaudeEngine implements ForjisEngine {
               taskEvent.stream = stream;
             }
             this.enrichEventPayload(taskEvent, event, ctx);
+            if (inspectorClarify && process.env['FORJIS_INSPECTOR_DEBUG'] === '1') {
+              console.log(
+                `[engine]: inspector-clarify onEvent type=${event.type}`,
+              );
+            }
             onEvent(taskEvent);
           }
         }
@@ -825,4 +866,26 @@ ${description}
 ---
 stage: pending
 `;
+}
+
+/**
+ * Encode a raw user turn as a single JSONL record matching the Claude
+ * CLI's `--input-format stream-json` contract.
+ *
+ * Each record is a complete JSON object on its own line with the shape
+ * `{"type":"user","message":{"role":"user","content":"<text>"}}`. The
+ * trailing newline terminates the JSONL record and triggers the CLI's
+ * line parser. Stream-json input mode lets the CLI begin processing
+ * the turn immediately without waiting for stdin EOF, which is
+ * required when the facilitator keeps stdin open to inject later
+ * turns via {@link ClaudeEngine.onUserMessage}.
+ *
+ * @param text - Raw user message text.
+ * @returns JSONL-framed payload ready to write to the child's stdin.
+ */
+function encodeStreamJsonUserTurn(text: string): string {
+  return `${JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: text },
+  })}\n`;
 }
