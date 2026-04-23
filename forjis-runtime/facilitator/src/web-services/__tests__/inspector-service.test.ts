@@ -20,6 +20,8 @@ import {
   ConcurrentBatchError,
   InspectorServiceImpl,
   InvalidBatchIdError,
+  MalformedPngError,
+  UnsupportedDataUrlEncodingError,
 } from '../inspector-service.js';
 
 /**
@@ -32,23 +34,45 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 /** A minimal valid-looking PNG payload (signature + 4 arbitrary bytes). */
 const PNG_PAYLOAD = Buffer.concat([PNG_SIGNATURE, Buffer.from([0x00, 0x00, 0x00, 0x0d])]);
 
-/** Base64 of {@link PNG_PAYLOAD}. */
+/** Pure base64 body of {@link PNG_PAYLOAD} (no data-URL prefix). */
 const PNG_BASE64 = PNG_PAYLOAD.toString('base64');
 
-/** Base64-encoded JSON text used for the `computedStyles` field. */
-const STYLES_BASE64 = Buffer.from(JSON.stringify({ color: 'red' }), 'utf-8').toString('base64');
+/**
+ * Wire-shape data URL that matches what the inspector SDK emits via
+ * `FileReader.readAsDataURL` for a PNG Blob — `data:image/png;base64,<body>`.
+ */
+const PNG_DATA_URL = `data:image/png;base64,${PNG_BASE64}`;
 
 /**
- * Build a minimal inbound pin with the supplied id, screen, and base64
- * capture payload.
+ * Plain UTF-8 JSON text used for the `computedStyles` field. This
+ * mirrors the SDK's `JSON.stringify(blobs.computedStyles)` output — no
+ * base64 encoding, no wrapping.
+ */
+const STYLES_JSON_TEXT = JSON.stringify({ color: 'red' });
+
+/**
+ * Build a minimal inbound pin with the supplied id, screen, and
+ * screenshot payload.
+ *
+ * The default `screenshotPayload` is a PNG data URL (the SDK wire
+ * shape); callers can override with a pure-base64 string to exercise
+ * the backward-compat path, or with a deliberately malformed value to
+ * exercise the error paths.
  *
  * @param id - Pin identifier.
  * @param screen - Logical screen name or `null`.
- * @param captureBase64 - Base64 used for all three `capture.*` fields
- *   except `computedStyles`, which defaults to {@link STYLES_BASE64}.
+ * @param screenshotPayload - Value used for both `elementScreenshot`
+ *   and `viewportScreenshot`. Defaults to {@link PNG_DATA_URL}.
+ * @param stylesText - Value used for `computedStyles`. Defaults to
+ *   {@link STYLES_JSON_TEXT} (plain JSON, as produced by the SDK).
  * @returns A fully populated {@link Pin}.
  */
-function makePin(id: string, screen: string | null, captureBase64 = PNG_BASE64): Pin {
+function makePin(
+  id: string,
+  screen: string | null,
+  screenshotPayload: string = PNG_DATA_URL,
+  stylesText: string = STYLES_JSON_TEXT,
+): Pin {
   return {
     id,
     platform: 'web',
@@ -61,9 +85,9 @@ function makePin(id: string, screen: string | null, captureBase64 = PNG_BASE64):
       bbox: { x: 0, y: 0, w: 10, h: 10 },
     },
     capture: {
-      elementScreenshot: captureBase64,
-      viewportScreenshot: captureBase64,
-      computedStyles: STYLES_BASE64,
+      elementScreenshot: screenshotPayload,
+      viewportScreenshot: screenshotPayload,
+      computedStyles: stylesText,
       annotations: [],
     },
     comment: `comment for ${id}`,
@@ -167,6 +191,95 @@ describe('InspectorServiceImpl', () => {
     expect(pin.capture.elementScreenshot).toBe(originalElement);
     expect(pin.capture.viewportScreenshot).toBe(originalViewport);
     expect(pin.capture.computedStyles).toBe(originalStyles);
+  });
+
+  // ------------------------------------------------------------------
+  // inspector-022: SDK wire-shape decode (data URL PNGs + JSON styles)
+  // ------------------------------------------------------------------
+
+  it('addPin strips the data-URL prefix and writes intact PNG magic bytes', async () => {
+    const batch = await service.createBatch('web');
+    // PNG_DATA_URL is the SDK-shape payload: "data:image/png;base64,<body>".
+    const pin = makePin('pin-data-url', '/home', PNG_DATA_URL);
+
+    await service.addPin(batch.id, pin);
+
+    const elementBytes = await readFile(
+      join(stagingRoot, batch.id, 'pin-01-element.png'),
+    );
+    expect(elementBytes.subarray(0, 8).equals(PNG_SIGNATURE)).toBe(true);
+    expect(elementBytes.equals(PNG_PAYLOAD)).toBe(true);
+  });
+
+  it('addPin still accepts pure-base64 screenshots for backward compatibility', async () => {
+    const batch = await service.createBatch('web');
+    const pin = makePin('pin-plain-b64', '/home', PNG_BASE64);
+
+    await service.addPin(batch.id, pin);
+
+    const elementBytes = await readFile(
+      join(stagingRoot, batch.id, 'pin-01-element.png'),
+    );
+    expect(elementBytes.equals(PNG_PAYLOAD)).toBe(true);
+  });
+
+  it('addPin writes computedStyles verbatim as readable JSON (no base64 decode)', async () => {
+    const batch = await service.createBatch('web');
+    const pin = makePin('pin-styles', '/home');
+
+    await service.addPin(batch.id, pin);
+
+    const stylesRaw = await readFile(
+      join(stagingRoot, batch.id, 'pin-01-styles.json'),
+      'utf-8',
+    );
+    // Written byte-for-byte as the SDK sent it (no wrapping, no decode).
+    expect(stylesRaw).toBe(STYLES_JSON_TEXT);
+    expect(JSON.parse(stylesRaw)).toEqual({ color: 'red' });
+  });
+
+  it('addPin rejects a non-PNG data:image/jpeg;base64 payload with MalformedPngError', async () => {
+    // Chosen contract: strict — the magic-byte guard fires on ANY decoded
+    // buffer that isn't PNG, regardless of the data-URL MIME subtype. We
+    // intentionally do NOT trust the MIME claim on the wire (the SDK only
+    // ever emits image/png; anything else is a contract violation).
+    const jpegBody = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]).toString('base64');
+    const jpegDataUrl = `data:image/jpeg;base64,${jpegBody}`;
+    const batch = await service.createBatch('web');
+    const pin = makePin('pin-jpeg', '/home', jpegDataUrl);
+
+    await expect(service.addPin(batch.id, pin)).rejects.toBeInstanceOf(MalformedPngError);
+    // No garbage on disk: the guard fires before any write.
+    await expect(
+      stat(join(stagingRoot, batch.id, 'pin-01-element.png')),
+    ).rejects.toThrow();
+  });
+
+  it('addPin raises MalformedPngError when decoded bytes lack the PNG signature', async () => {
+    const notPngBase64 = Buffer.from('definitely-not-a-png', 'utf-8').toString('base64');
+    const batch = await service.createBatch('web');
+    const pin = makePin('pin-bad-png', '/home', notPngBase64);
+
+    await expect(service.addPin(batch.id, pin)).rejects.toBeInstanceOf(MalformedPngError);
+    await expect(
+      stat(join(stagingRoot, batch.id, 'pin-01-element.png')),
+    ).rejects.toThrow();
+    await expect(
+      stat(join(stagingRoot, batch.id, 'pin-01-styles.json')),
+    ).rejects.toThrow();
+  });
+
+  it('addPin rejects a data URL whose encoding is not base64', async () => {
+    const nonBase64DataUrl = 'data:image/png,%89PNG%0D%0A%1A%0A';
+    const batch = await service.createBatch('web');
+    const pin = makePin('pin-url-encoded', '/home', nonBase64DataUrl);
+
+    await expect(service.addPin(batch.id, pin)).rejects.toBeInstanceOf(
+      UnsupportedDataUrlEncodingError,
+    );
+    await expect(
+      stat(join(stagingRoot, batch.id, 'pin-01-element.png')),
+    ).rejects.toThrow();
   });
 
   // ------------------------------------------------------------------

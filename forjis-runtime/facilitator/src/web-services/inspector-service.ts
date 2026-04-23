@@ -2,11 +2,11 @@
  * Facilitator-side implementation of the frozen Inspector v1.0 lifecycle.
  *
  * Owns the in-memory `Map<string, Batch>` that tracks every batch observed
- * during a single `forjis dev` session, decodes inbound base64 capture
- * payloads to per-batch staging directories under
- * `<projectDir>/.forjis/inspector/<batchId>/`, and rewrites the three
- * `capture.*` fields on each stored {@link Pin} to project-relative
- * forward-slash paths. Raises in-process lifecycle events
+ * during a single `forjis dev` session, persists inbound capture payloads
+ * (base64 PNG data URLs + a UTF-8 JSON styles string) to per-batch staging
+ * directories under `<projectDir>/.forjis/inspector/<batchId>/`, and
+ * rewrites the three `capture.*` fields on each stored {@link Pin} to
+ * project-relative forward-slash paths. Raises in-process lifecycle events
  * (`batch.submitted`, `clarify.answer`, `pin.added`, `task.status`) so
  * downstream consumers (the clarifier orchestrator added in task 005) can
  * subscribe without a circular import.
@@ -30,6 +30,167 @@ import type {
 } from '@forjis/shared';
 
 import { atomicWriteFile, atomicWriteFileBinary, ensureDir } from '../state.js';
+
+/**
+ * The 8-byte PNG magic signature (`\x89PNG\r\n\x1a\n`). Every valid PNG
+ * begins with exactly these bytes — the first byte (0x89) is deliberately
+ * outside ASCII to flag corruption by 7-bit-clean transports, and the
+ * trailing `\r\n...\n` triggers newline-translation detection on legacy
+ * filesystems. The server asserts this prefix on every decoded screenshot
+ * so silently-corrupted uploads never reach downstream agents.
+ */
+const PNG_MAGIC_BYTES: Buffer = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
+/**
+ * Regular expression that matches a `data:<mime>;base64,` scheme prefix
+ * on a screenshot payload. The SDK (`forjis-runtime/inspector/src/pipeline.ts`)
+ * always emits base64-encoded PNGs via `FileReader.readAsDataURL`, so any
+ * non-base64 data URL (for example `data:image/png,<url-encoded>`) is a
+ * contract violation and rejected upstream.
+ */
+const DATA_URL_BASE64_PREFIX_RE = /^data:[^;,]+;base64,/;
+
+/**
+ * Regular expression that matches ANY `data:<mime>,` scheme prefix. Used
+ * ONLY to detect non-base64 data URLs so they can be rejected with a
+ * typed error before they reach `Buffer.from(..., 'base64')`.
+ */
+const DATA_URL_ANY_PREFIX_RE = /^data:[^;,]*[;,]/;
+
+/**
+ * Domain error raised when a capture payload arrives as a `data:` URL
+ * whose encoding is NOT base64 (the SDK only ever emits base64 PNGs).
+ *
+ * The offending MIME/encoding substring is attached as a non-enumerable
+ * readonly field so default `console.error(err)` and `util.inspect(err)`
+ * output do not echo raw payload bytes.
+ */
+export class UnsupportedDataUrlEncodingError extends Error {
+  /**
+   * The rejected data-URL scheme prefix (up to and including the first
+   * `,`). Stored non-enumerably; not included in the message text.
+   */
+  public readonly rejectedPrefix!: string;
+
+  /**
+   * Construct an `UnsupportedDataUrlEncodingError`.
+   *
+   * @param rejectedPrefix - The leading `data:<mime>[;<params>],` portion
+   *   of the payload that failed the base64-encoding check. Stored as a
+   *   non-enumerable readonly field so it never appears in default
+   *   error output.
+   */
+  constructor(rejectedPrefix: string) {
+    super(
+      'Unsupported screenshot encoding: only data URLs with ";base64," are accepted.',
+    );
+    this.name = 'UnsupportedDataUrlEncodingError';
+    Object.setPrototypeOf(this, new.target.prototype);
+    Object.defineProperty(this, 'rejectedPrefix', {
+      value: rejectedPrefix,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+  }
+}
+
+/**
+ * Domain error raised when a decoded screenshot buffer does not begin
+ * with the canonical 8-byte PNG signature. Surfaces silent corruption
+ * (wrong encoding, truncated payload, accidental JPEG/GIF upload) at
+ * the service boundary instead of leaving garbage files on disk for
+ * downstream agents to puzzle over.
+ *
+ * The decoded length is exposed for diagnostics but the raw payload
+ * bytes are NEVER attached to the error (log hygiene).
+ */
+export class MalformedPngError extends Error {
+  /**
+   * Length (in bytes) of the decoded buffer that failed the magic-byte
+   * check. Stored non-enumerably so default error output does not echo
+   * it.
+   */
+  public readonly decodedByteLength!: number;
+
+  /**
+   * Construct a `MalformedPngError`.
+   *
+   * @param fieldName - Capture field whose decoded bytes failed the
+   *   magic-byte check (e.g. `"elementScreenshot"`). Included in the
+   *   message text so operators can tell which of the two PNGs is bad.
+   * @param decodedByteLength - Length of the decoded buffer. Stored as
+   *   a non-enumerable readonly field.
+   */
+  constructor(fieldName: string, decodedByteLength: number) {
+    super(
+      `Decoded ${fieldName} does not start with the PNG magic bytes (got ${decodedByteLength} bytes).`,
+    );
+    this.name = 'MalformedPngError';
+    Object.setPrototypeOf(this, new.target.prototype);
+    Object.defineProperty(this, 'decodedByteLength', {
+      value: decodedByteLength,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+  }
+}
+
+/**
+ * Strip an optional `data:<mime>;base64,` scheme prefix from a screenshot
+ * payload and return the pure-base64 remainder.
+ *
+ * The SDK always emits base64 data URLs, but pure-base64 input (no
+ * `data:` prefix) is accepted unchanged for backward compatibility with
+ * the pre-fix test fixtures and any caller that hand-builds a pin.
+ *
+ * @param payload - Raw value of `capture.elementScreenshot` or
+ *   `capture.viewportScreenshot` as received from the SDK.
+ * @returns The base64 body with any `data:<mime>;base64,` prefix removed.
+ * @throws {UnsupportedDataUrlEncodingError} When `payload` carries a
+ *   `data:` prefix whose encoding is NOT base64.
+ */
+function stripDataUrlPrefix(payload: string): string {
+  const base64Match = payload.match(DATA_URL_BASE64_PREFIX_RE);
+  if (base64Match !== null) {
+    return payload.slice(base64Match[0].length);
+  }
+  const anyPrefixMatch = payload.match(DATA_URL_ANY_PREFIX_RE);
+  if (anyPrefixMatch !== null) {
+    throw new UnsupportedDataUrlEncodingError(anyPrefixMatch[0]);
+  }
+  return payload;
+}
+
+/**
+ * Decode a screenshot field to a binary buffer and verify it starts with
+ * the PNG magic signature.
+ *
+ * @param fieldName - Human-readable name of the capture field, used in
+ *   the `MalformedPngError` message. Must be a static string literal —
+ *   never an interpolated payload value — to keep error messages free
+ *   of untrusted content.
+ * @param payload - Raw screenshot payload (data URL or pure base64).
+ * @returns Decoded PNG bytes.
+ * @throws {UnsupportedDataUrlEncodingError} When the data URL uses a
+ *   non-base64 encoding.
+ * @throws {MalformedPngError} When the decoded bytes do not begin with
+ *   the 8-byte PNG signature.
+ */
+function decodePngPayload(fieldName: string, payload: string): Buffer {
+  const base64Body = stripDataUrlPrefix(payload);
+  const decoded = Buffer.from(base64Body, 'base64');
+  if (
+    decoded.length < PNG_MAGIC_BYTES.length ||
+    !decoded.subarray(0, PNG_MAGIC_BYTES.length).equals(PNG_MAGIC_BYTES)
+  ) {
+    throw new MalformedPngError(fieldName, decoded.length);
+  }
+  return decoded;
+}
 
 /**
  * Options accepted by {@link InspectorServiceImpl}'s constructor.
@@ -304,18 +465,35 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
   /**
    * Append a pin to an existing batch.
    *
-   * Decodes the three `capture.*` base64 fields to disk under the batch's
-   * staging directory, rewrites each field on an internal clone of the pin
-   * to the corresponding project-relative forward-slash path, appends the
-   * clone to `batch.pins`, deduplicates `pin.screen` onto `batch.screens`,
-   * updates the pin-id reverse index, and emits `pin.added`.
+   * Persists the three `capture.*` fields to disk under the batch's
+   * staging directory, rewrites each field on an internal clone of the
+   * pin to the corresponding project-relative forward-slash path,
+   * appends the clone to `batch.pins`, deduplicates `pin.screen` onto
+   * `batch.screens`, updates the pin-id reverse index, and emits
+   * `pin.added`.
+   *
+   * Wire contract per `forjis-runtime/inspector/src/pipeline.ts::buildPin`:
+   * - `capture.elementScreenshot` / `capture.viewportScreenshot` arrive as
+   *   `data:image/png;base64,<base64>` data URLs (the `FileReader.readAsDataURL`
+   *   shape). Pure-base64 input is still accepted for legacy/test callers.
+   *   The server strips any `data:<mime>;base64,` prefix, base64-decodes
+   *   the remainder, and asserts the first 8 bytes match the PNG magic
+   *   signature before writing.
+   * - `capture.computedStyles` arrives as a plain UTF-8 JSON string
+   *   (already `JSON.stringify`-ed upstream) and is written verbatim.
    *
    * The caller-supplied `pin` object is never mutated (a shallow spread
    * produces the stored copy).
    *
    * @param batchId - Identifier of the target batch.
-   * @param pin - Pin to append. `capture.*` fields MUST be base64 strings.
+   * @param pin - Pin to append. Screenshot fields MUST be base64 (with or
+   *   without a `data:<mime>;base64,` prefix); `computedStyles` MUST be
+   *   valid UTF-8 JSON text.
    * @throws When the batch does not exist or is not in status `"queued"`.
+   * @throws {UnsupportedDataUrlEncodingError} When a screenshot payload
+   *   uses a `data:` URL with a non-base64 encoding.
+   * @throws {MalformedPngError} When the decoded screenshot bytes do not
+   *   start with the PNG magic signature.
    */
   async addPin(batchId: string, pin: Pin): Promise<void> {
     const batch = this.requireQueuedBatch(batchId);
@@ -436,7 +614,8 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
    * can hand them to the clarifier persona via `modeArgs.parentContext`.
    *
    * @param parentPinId - Identifier of the pin being replied to.
-   * @param pin - New pin carrying the reply. `capture.*` fields MUST be base64.
+   * @param pin - New pin carrying the reply. Follows the same capture
+   *   contract as {@link addPin} (data-URL / base64 PNGs, JSON-text styles).
    * @param comment - Comment text attached to the reply pin.
    * @param failureSummary - Summary of the failed parent task, or
    *   `null` / `undefined` when the reply is not failure-scoped.
@@ -548,16 +727,27 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
   }
 
   /**
-   * Decode the three `capture.*` base64 fields of an inbound pin to disk and
+   * Persist the three `capture.*` fields of an inbound pin to disk and
    * produce a new {@link Pin} with those fields replaced by project-relative
    * forward-slash paths.
    *
-   * Never mutates the input `pin`.
+   * Screenshots are data-URL-stripped, base64-decoded, verified against
+   * the PNG magic signature, and written as binary. `computedStyles` is
+   * already JSON text and is written verbatim as UTF-8.
+   *
+   * Never mutates the input `pin`. Decode/validation failures propagate
+   * BEFORE any file is written, so a rejected payload leaves no trace on
+   * disk.
    *
    * @param batch - Batch the pin belongs to; its staging directory and the
    *   current `pins.length` determine the on-disk filenames.
-   * @param pin - Inbound pin whose `capture.*` fields are base64 strings.
+   * @param pin - Inbound pin whose capture fields follow the contract
+   *   documented on {@link addPin}.
    * @returns A new pin whose `capture.*` fields are project-relative paths.
+   * @throws {UnsupportedDataUrlEncodingError} When a screenshot data URL
+   *   uses a non-base64 encoding.
+   * @throws {MalformedPngError} When a decoded screenshot does not begin
+   *   with the PNG magic signature.
    */
   private async persistPinAndRewriteCapture(batch: Batch, pin: Pin): Promise<Pin> {
     const batchDir = join(this.stagingRoot, batch.id);
@@ -567,9 +757,17 @@ export class InspectorServiceImpl extends EventEmitter implements InspectorServi
     const viewportPath = join(batchDir, `pin-${pinIndex}-viewport.png`);
     const stylesPath = join(batchDir, `pin-${pinIndex}-styles.json`);
 
-    await atomicWriteFileBinary(elementPath, Buffer.from(pin.capture.elementScreenshot, 'base64'));
-    await atomicWriteFileBinary(viewportPath, Buffer.from(pin.capture.viewportScreenshot, 'base64'));
-    await atomicWriteFileBinary(stylesPath, Buffer.from(pin.capture.computedStyles, 'base64'));
+    // Decode + validate BOTH screenshots before any disk write so a
+    // malformed upload never leaves half-written files behind.
+    const elementBytes = decodePngPayload('elementScreenshot', pin.capture.elementScreenshot);
+    const viewportBytes = decodePngPayload('viewportScreenshot', pin.capture.viewportScreenshot);
+
+    await atomicWriteFileBinary(elementPath, elementBytes);
+    await atomicWriteFileBinary(viewportPath, viewportBytes);
+    // computedStyles is already JSON-stringified UTF-8 text upstream
+    // (see `buildPin` in forjis-runtime/inspector/src/pipeline.ts). Write
+    // it verbatim — base64-decoding here would produce noise.
+    await atomicWriteFile(stylesPath, pin.capture.computedStyles);
 
     return {
       ...pin,
