@@ -38,6 +38,7 @@ import {
   summarizeFailure,
   tailEventLog,
 } from './inspector-failure-summarizer.js';
+import { extractJsonEnvelopes } from './inspector-json-extract.js';
 import { atomicWriteFile, ensureDir } from './state.js';
 import type { TaskEvent } from './types.js';
 import { killProcess, readPidSync } from './process-utils.js';
@@ -490,28 +491,35 @@ export class InspectorClarifierRunner {
       `[clarifier]: run ${batchId} assistant-text bytes=${text.length} preview=${truncate(text, 80)}`,
     );
 
-    const parsed = tryParseJson(text);
-    if (parsed === null) {
+    const envelopes = extractJsonEnvelopes(text);
+    if (envelopes.length === 0) {
       console.warn(
         `[inspector-clarifier-runner]: dropping malformed assistant line for "${batchId}": ${truncate(text, 200)}`,
       );
       return;
     }
 
-    run.firstAssistantSeen = true;
-    this.flushPendingAnswers(run);
-
-    if (isQuestionPayload(parsed)) {
-      this.handleQuestion(run, parsed.question);
-      return;
+    for (const envelope of envelopes) {
+      if (isQuestionPayload(envelope)) {
+        run.firstAssistantSeen = true;
+        this.flushPendingAnswers(run);
+        this.handleQuestion(run, envelope.question);
+        return;
+      }
+      if (isFinalizePayload(envelope)) {
+        run.firstAssistantSeen = true;
+        this.flushPendingAnswers(run);
+        const payload = envelope;
+        void this.handleFinalize(run, payload).catch((err: unknown) => {
+          this.emitSessionError(run, 'FINALIZE_FAILED', err);
+        });
+        return;
+      }
     }
 
-    if (isFinalizePayload(parsed)) {
-      void this.handleFinalize(run, parsed).catch((err: unknown) => {
-        this.emitSessionError(run, 'FINALIZE_FAILED', err);
-      });
-      return;
-    }
+    console.warn(
+      `[clarifier]: run ${batchId} prose-only turn ignored (preview=${truncate(text, 200)})`,
+    );
   }
 
   /**
@@ -1039,20 +1047,6 @@ function extractAssistantText(event: TaskEvent): string | null {
   // The adapter appends a literal '...' truncation marker; remove it
   // before JSON parsing so the payload round-trips cleanly.
   return stripped.endsWith('...') ? stripped.slice(0, -3) : stripped;
-}
-
-/**
- * Parse JSON without throwing.
- *
- * @param text - Candidate JSON string.
- * @returns The parsed value, or `null` when the input is not valid JSON.
- */
-function tryParseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
 }
 
 /**
