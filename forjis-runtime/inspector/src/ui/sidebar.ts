@@ -632,13 +632,19 @@ function renderList(
 /**
  * Safely read the persisted sidebar collapsed flag.
  *
+ * The initial default is **collapsed** (inspector-025): an absent
+ * sessionStorage entry returns `true` so a fresh page load does not
+ * cover the host page's left ~280 px with the finalized-batches panel.
+ * Only an explicit `"false"` (= "user expanded it in this session")
+ * rehydrates the expanded state.
+ *
  * @returns `true` when the sidebar should start collapsed.
  */
 function readSidebarCollapsedFlag(): boolean {
   try {
-    return window.sessionStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
+    return window.sessionStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) !== 'false';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -684,6 +690,7 @@ function buildSidebarHeader(): {
   chevron.className = 'sidebar-chevron';
   chevron.setAttribute('data-forjis-sidebar-chevron', 'true');
   chevron.setAttribute('aria-label', 'Collapse sidebar');
+  chevron.setAttribute('title', 'Collapse');
   chevron.textContent = '‹';
   header.appendChild(chevron);
   return { header, title, railLabel, chevron };
@@ -720,6 +727,9 @@ export function createSidebar(opts: InitSidebarOptions): SidebarHandle {
       'aria-label',
       collapsed ? 'Expand sidebar' : 'Collapse sidebar',
     );
+    // Hover tooltip mirrors aria-label so sighted + pointer users get the
+    // same verb ("Expand" when collapsed, "Collapse" when expanded).
+    chevron.setAttribute('title', collapsed ? 'Expand' : 'Collapse');
     writeSidebarCollapsedFlag(collapsed);
   };
 
