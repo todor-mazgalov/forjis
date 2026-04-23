@@ -104,9 +104,19 @@ class FakeInspectorTransport implements InspectorTransport {
   }
 }
 
-/** Build a minimal inbound pin with base64 capture payloads. */
+/**
+ * Build a minimal inbound pin with wire-shape capture payloads:
+ * a `data:image/png;base64,<body>` data URL for each screenshot (where
+ * the decoded body begins with the PNG magic signature, as the server's
+ * magic-byte guard requires) and a plain UTF-8 JSON string for
+ * `computedStyles`. Matches `buildPin` in
+ * `forjis-runtime/inspector/src/pipeline.ts`.
+ */
 function makePin(id: string): Pin {
-  const zero = Buffer.from([0]).toString('base64');
+  const pngBytes = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
+  ]);
+  const pngDataUrl = `data:image/png;base64,${pngBytes.toString('base64')}`;
   return {
     id,
     platform: 'web',
@@ -119,9 +129,9 @@ function makePin(id: string): Pin {
       bbox: { x: 0, y: 0, w: 1, h: 1 },
     },
     capture: {
-      elementScreenshot: zero,
-      viewportScreenshot: zero,
-      computedStyles: zero,
+      elementScreenshot: pngDataUrl,
+      viewportScreenshot: pngDataUrl,
+      computedStyles: '{}',
       annotations: [],
     },
     comment: '',
