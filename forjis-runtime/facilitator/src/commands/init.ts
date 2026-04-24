@@ -2,10 +2,13 @@
  * Init command for @forjis/cli.
  *
  * Scaffolds a new build.forjis file in the project directory with
- * placeholder comments and the minimal required structure.
+ * placeholder comments and the minimal required structure. Also
+ * idempotently appends `.forjis/context/` to the project's root
+ * `.gitignore` so the file-level context index stays out of VCS
+ * (spec R10).
  */
 
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { CliError } from '../errors.js';
@@ -70,4 +73,56 @@ export async function initCommand(cwd: string): Promise<void> {
 
   await atomicWriteFile(filePath, SCAFFOLD);
   console.log(`Created build.forjis at ${filePath}`);
+
+  await ensureGitignoreEntry(cwd, '.forjis/context/');
+}
+
+/**
+ * Ensures the target project's `.gitignore` contains the given line.
+ *
+ * Behaviour:
+ *   - Missing `.gitignore` → create with `<line>\n`.
+ *   - Present + already contains a line whose trimmed content equals
+ *     `line` → no-op (silent, no log).
+ *   - Present + missing → append `\n<line>\n` (preserves existing
+ *     bytes; extra leading newline guards against no-trailing-newline
+ *     files).
+ *
+ * The presence of broader entries (e.g. `.forjis/` or `.forjis/*`)
+ * does NOT suppress the explicit append (spec R10).
+ *
+ * @param projectDir - The target project directory.
+ * @param line - The literal line to ensure (without trailing newline).
+ */
+export async function ensureGitignoreEntry(
+  projectDir: string,
+  line: string,
+): Promise<void> {
+  const gitignorePath = join(projectDir, '.gitignore');
+  let existing: string | null;
+  try {
+    existing = await readFile(gitignorePath, 'utf-8');
+  } catch {
+    existing = null;
+  }
+
+  if (existing === null) {
+    await atomicWriteFile(gitignorePath, `${line}\n`);
+    console.log(`[init]: added ${line} to .gitignore`);
+    return;
+  }
+
+  const alreadyPresent = existing
+    .split('\n')
+    .some((l) => l.trim() === line);
+  if (alreadyPresent) {
+    return;
+  }
+
+  const needsLeadingNewline =
+    existing.length > 0 && !existing.endsWith('\n');
+  const appended =
+    existing + (needsLeadingNewline ? '\n' : '') + `${line}\n`;
+  await atomicWriteFile(gitignorePath, appended);
+  console.log(`[init]: added ${line} to .gitignore`);
 }

@@ -29,6 +29,17 @@ import { existsSync, renameSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { resolveRoleVisuals } from '../role-visuals/index.js';
 import { drainAll, release as releaseVisualsCommand } from '../role-visuals/command-runner.js';
+import {
+  augmentExplorationFilesTouched,
+  invalidateExplorations,
+  rankByTask,
+  readTreeYaml,
+  refreshTreeYaml,
+  writeContextArtefactsForTask,
+  type ArtefactRole,
+} from '../context-cache/index.js';
+import { readFile as readFileAsync } from 'node:fs/promises';
+import { spawn as spawnChild } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { writePipelinePlan, syncPlanFromState, syncBranchesFromState, forcePlanReady, getRunningRole, syncRetryStateToPlan, parsePipelinePlan, PlanRoleNotFoundError } from '../web-services/plan-writer.js';
@@ -595,6 +606,72 @@ async function runMainLoop(
         /* ignore -- poll will catch up */
       }
 
+      // Context-cache hook (a): pre-task refresh of
+      // `.forjis/context/tree.yaml` + `.forjis/context/index.md` when
+      // the build file opted in (refresh_on_task: true, the default).
+      // Never blocks dispatch — refreshTreeYaml already degrades to
+      // zero counts on failure.
+      const contextYaml = await readYamlFile<ContextYamlFile>(
+        join(configResult.configDir, 'context.yaml'),
+      ).catch(() => null);
+      const refreshOnTask =
+        contextYaml?.refresh_on_task ?? CONTEXT_DEFAULT_REFRESH_ON_TASK;
+      const inlineTopN =
+        contextYaml?.inline_top_n ?? CONTEXT_DEFAULT_INLINE_TOP_N;
+      if (refreshOnTask) {
+        try {
+          await refreshTreeYaml({ repoRoot: options.projectDir });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[context-cache]: refresh skipped — ${msg}`);
+        }
+      }
+
+      // Context-cache hook (b): per-role artefact write. Read the
+      // refreshed (or pre-existing) tree.yaml + index.md, build
+      // candidate paths, then emit one `context-<org>-<team>-<role>.yaml`
+      // per non-Reviewer role. Per-role failure logs + continues.
+      try {
+        const tree = await readTreeYaml(
+          join(options.projectDir, '.forjis', 'context', 'tree.yaml'),
+        );
+        let indexMd = '';
+        try {
+          indexMd = await readFileAsync(
+            join(options.projectDir, '.forjis', 'context', 'index.md'),
+            'utf-8',
+          );
+        } catch {
+          /* index.md missing → empty string (best-effort) */
+        }
+        const candidatePaths = await buildCandidatePaths(
+          options.projectDir,
+          task.id,
+          task.description,
+          tree,
+        );
+        const flattenedRoles = flattenRoles(configResult.runtimeConfig.orgs);
+        await writeContextArtefactsForTask({
+          projectDir: options.projectDir,
+          taskId: task.id,
+          taskDescription: task.description,
+          roles: flattenedRoles,
+          tree,
+          indexMd,
+          inlineTopN,
+          candidatePaths,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[context-cache]: artefact write skipped — ${msg}`);
+      }
+
+      // Tracks every `Read` file_path captured from the Explorer
+      // subprocess. Used by hook (c) to rewrite the exploration cache
+      // file's `files_touched` frontmatter after the orchestrator has
+      // written it on cache-miss.
+      const explorerFilesRead = new Set<string>();
+
       // Resolve per-role visuals artefacts up front (once per task
       // attempt). The orchestrator subprocess reads each file via
       // `.forjis/tasks/<task-id>/visuals-<org>-<team>-<role>.yaml` at
@@ -635,6 +712,35 @@ async function runMainLoop(
                 // out-of-scope note on manifest rework).
                 appendManifestEntry(options.projectDir, task.id, currentIdentity.role, filePath)
                   .catch(() => { /* best-effort */ });
+              }
+            }
+
+            // Context-cache hook (c): capture Explorer Read tool-call
+            // paths so the facilitator can inject files_touched on
+            // cache-miss writeback. Scoped to the Explorer stage only
+            // (the persona that actually populates the cache). Stage
+            // is looked up from the runtime config role tree; falls
+            // back to the role-name substring when stage is absent.
+            if (
+              currentIdentity !== null &&
+              event.type === 'tool_call' &&
+              event.toolName === 'Read'
+            ) {
+              const runtimeRole = configResult.runtimeConfig.orgs
+                .flatMap((o) => o.teams.flatMap((t) => t.roles))
+                .find(
+                  (r) =>
+                    r.org === currentIdentity!.org &&
+                    r.team === currentIdentity!.team &&
+                    r.name === currentIdentity!.role,
+                );
+              const stageLc = (runtimeRole?.stage ?? currentIdentity.role)
+                .toLowerCase();
+              if (stageLc === 'explorer') {
+                const readPath = extractReadFilePath(event.payload);
+                if (readPath !== null) {
+                  explorerFilesRead.add(readPath);
+                }
               }
             }
           },
@@ -709,8 +815,49 @@ async function runMainLoop(
 
       console.log(`[engine]: task "${task.id}" completed (exit code: 0)`);
 
+      // Context-cache hook (c, part 2): inject `files_touched` into
+      // `.forjis/exploration/<taskId>.md` when the Explorer wrote it
+      // on cache-miss. The helper is a silent no-op when the file
+      // does not exist (cache-hit path), so it is safe to always
+      // invoke unconditionally.
+      await augmentExplorationFilesTouched({
+        projectDir: options.projectDir,
+        taskId: task.id,
+        filesRead: Array.from(explorerFilesRead),
+      }).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[context-cache]: files_touched inject skipped — ${msg}`);
+      });
+
       await queue.transition(task.id, 'done');
       console.log(`[queue]: task "${task.id}" -> done`);
+
+      // Context-cache hook (d): post-commit invalidator. After the
+      // orchestrator's archive+commit step has landed on HEAD, flip
+      // any overlapping exploration cache entries to `status: invalid`.
+      // Never blocks the pipeline — git unavailability yields zero
+      // changed paths, which results in a zero-count no-op.
+      try {
+        const changedPaths = await gitDiffTreeHead(options.projectDir);
+        if (changedPaths.length > 0) {
+          const invalidated = await invalidateExplorations({
+            projectDir: options.projectDir,
+            taskId: task.id,
+            changedPaths,
+            now: new Date(),
+          });
+          if (invalidated.invalidatedCount > 0) {
+            console.log(
+              `[invalidator]: ${invalidated.invalidatedCount} entries invalidated`
+            );
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[context-cache]: post-commit invalidation skipped — ${msg}`
+        );
+      }
     } catch (err) {
       await syncRetryStateToPlan(options.projectDir, task.id, monitor.getAllRetryStates()).catch(() => {});
       await queue.transition(task.id, 'failed');
@@ -909,6 +1056,139 @@ async function resolveVisualsForRoles(
     }
   }
   return keys;
+}
+
+/** Shape of `.forjis/config/context.yaml` on disk. */
+interface ContextYamlFile {
+  refresh_on_task?: boolean;
+  inline_top_n?: number;
+}
+
+/** Default for `context.refresh_on_task` when the file is absent. */
+const CONTEXT_DEFAULT_REFRESH_ON_TASK = true;
+
+/** Default for `context.inline_top_n` when the file is absent. */
+const CONTEXT_DEFAULT_INLINE_TOP_N = 20;
+
+/** Regex used to extract path-like tokens from TASK.md + exploration.md. */
+const CANDIDATE_PATH_REGEX =
+  /[\w./-]+\.(ts|tsx|js|jsx|md|ya?ml|json|sh|py)\b/g;
+
+/**
+ * Flattens the runtime config role tree into {@link ArtefactRole}s.
+ *
+ * @param orgs - Top-level runtime orgs.
+ * @returns One entry per (org, team, role).
+ */
+function flattenRoles(
+  orgs: ConfigResult['runtimeConfig']['orgs'],
+): ArtefactRole[] {
+  const out: ArtefactRole[] = [];
+  for (const org of orgs) {
+    for (const team of org.teams) {
+      for (const role of team.roles) {
+        out.push({
+          org: role.org,
+          team: role.team,
+          role: role.name,
+          stage: role.stage,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Builds the candidate-path set used by the per-role artefact and the
+ * overlap scanner.
+ *
+ * Sources (union, dedupe, POSIX-normalised):
+ *   - path-like tokens in TASK.md
+ *   - path-like tokens in openspec/changes/<taskId>/exploration.md
+ *   - top-20 rows from `rankByTask(tree, taskDescription, 20)`
+ */
+async function buildCandidatePaths(
+  projectDir: string,
+  taskId: string,
+  taskDescription: string,
+  tree: { files: Array<{ path: string; summary: string }> },
+): Promise<string[]> {
+  const set = new Set<string>();
+
+  const taskMdPath = join(projectDir, '.forjis', 'tasks', taskId, 'TASK.md');
+  const explorationPath = join(
+    projectDir,
+    'openspec',
+    'changes',
+    taskId,
+    'exploration.md',
+  );
+
+  for (const candidate of [taskMdPath, explorationPath]) {
+    try {
+      const content = await readFileAsync(candidate, 'utf-8');
+      for (const match of content.matchAll(CANDIDATE_PATH_REGEX)) {
+        const p = match[0].replace(/\\/g, '/');
+        set.add(p);
+      }
+    } catch {
+      /* ignore missing file */
+    }
+  }
+
+  for (const ranked of rankByTask(
+    tree.files as Array<{ path: string; oid: string; summary: string }>,
+    taskDescription,
+    20,
+  )) {
+    set.add(ranked.path);
+  }
+
+  return Array.from(set);
+}
+
+/**
+ * Runs `git diff-tree --no-commit-id --name-status -r HEAD` in
+ * `projectDir` and returns the raw stdout lines.
+ *
+ * Returns an empty array on any failure (non-zero exit, git missing,
+ * non-git repo). Never throws.
+ */
+function gitDiffTreeHead(projectDir: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    const child = spawnChild(
+      'git',
+      ['diff-tree', '--no-commit-id', '--name-status', '-r', 'HEAD'],
+      { cwd: projectDir },
+    );
+    let stdout = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf-8');
+    });
+    child.on('error', () => resolve([]));
+    child.on('close', (code) => {
+      if (code !== 0) {
+        resolve([]);
+        return;
+      }
+      const lines = stdout.split('\n').filter((l) => l.trim().length > 0);
+      resolve(lines);
+    });
+  });
+}
+
+/**
+ * Extracts the `file_path` from a `Read` tool-call payload.
+ *
+ * Claude tool-call payloads use `file_path` for `Read`. Returns null
+ * when the payload is missing the field or the value is not a
+ * non-empty string.
+ */
+function extractReadFilePath(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const fp = (payload as Record<string, unknown>).file_path;
+  return typeof fp === 'string' && fp.length > 0 ? fp : null;
 }
 
 /** Threshold fraction at which the budget gate triggers. */

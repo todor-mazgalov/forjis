@@ -642,3 +642,119 @@ describe('parseBuildFile — inspector block', () => {
     }
   });
 });
+
+// --------------------------------------------------------------------------
+// parseBuildFile — context block (cache-harden R7)
+// --------------------------------------------------------------------------
+
+describe('parseBuildFile — context block', () => {
+  const baseYaml = [
+    'version: 1',
+    'repositories:',
+    '  - type: git',
+    '    url: "https://a.git"',
+    '    ref: v1',
+  ].join('\n');
+
+  it('applies defaults when the context block is omitted', () => {
+    const config = parseBuildFile(baseYaml);
+    expect(config.context.refresh_on_task).toBe(true);
+    expect(config.context.inline_top_n).toBe(20);
+  });
+
+  it('applies defaults when context is explicitly null', () => {
+    const yaml = [...baseYaml.split('\n'), 'context: ~'].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.context.refresh_on_task).toBe(true);
+    expect(config.context.inline_top_n).toBe(20);
+  });
+
+  it('accepts refresh_on_task: false', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  refresh_on_task: false',
+    ].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.context.refresh_on_task).toBe(false);
+    expect(config.context.inline_top_n).toBe(20);
+  });
+
+  it('accepts an explicit inline_top_n value', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  inline_top_n: 5',
+    ].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.context.inline_top_n).toBe(5);
+  });
+
+  it('rejects an unknown key inside context', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  refresh_on_foo: true',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes('context: unrecognized key "refresh_on_foo"'),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('rejects inline_top_n: 0 (below range)', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  inline_top_n: 0',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes('context.inline_top_n'),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('rejects non-object / array context value', () => {
+    const yaml = [...baseYaml.split('\n'), 'context: []'].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes('context: must be a mapping'),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('rejects non-boolean refresh_on_task', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  refresh_on_task: "yes"',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes('context.refresh_on_task'),
+        ),
+      ).toBe(true);
+    }
+  });
+});

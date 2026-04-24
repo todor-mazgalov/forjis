@@ -77,6 +77,8 @@ export {
   tasksNukeCommand,
 } from './commands/tasks.js';
 export { taskCreateCommand } from './commands/task-create.js';
+export { contextRefreshCommand } from './commands/context.js';
+export { ensureGitignoreEntry } from './commands/init.js';
 
 // -- Engine abstraction (no prepare()) --
 export { loadEngine, registerEngine, getRegisteredEngines } from './engine.js';
@@ -147,3 +149,41 @@ export type {
 
 // -- Errors --
 export * from './errors.js';
+
+// -- Context cache (cache-harden capability) --
+export {
+  computeBlobOid,
+  computeBlobOidForFile,
+  summarizeFile,
+  readTreeYaml,
+  writeTreeYaml,
+  refreshTreeYaml,
+  buildIndexMd,
+  invalidateExplorations,
+  augmentExplorationFilesTouched,
+  findOverlappingExplorations,
+  rankByTask,
+  writeContextArtefact,
+  writeContextArtefactsForTask,
+} from './context-cache/index.js';
+export type {
+  SummarizeInput,
+  SummarizeOptions,
+  SummarizeResult,
+  TreeEntry,
+  TreeYaml,
+  RefreshOptions,
+  RefreshResult,
+  BuildIndexOptions,
+  InvalidateOptions,
+  InvalidateResult,
+  AugmentOptions,
+  OverlapEntry,
+  OverlapOptions,
+  RankedRow,
+  ArtefactRole,
+  ContextArtefact,
+  PriorExplorationEntry,
+  WriteArtefactOptions,
+  WriteArtefactsForTaskOptions,
+} from './context-cache/index.js';

@@ -12,3 +12,4 @@ export { writeOutcomesConfig } from './outcomes-writer.js';
 export { writeConstraintsConfig } from './constraints-writer.js';
 export { writeTokenBudgetConfig } from './token-budget-writer.js';
 export { writeHealthCheckConfig } from './health-check-writer.js';
+export { writeContextConfig, writeContextYaml } from './context-writer.js';

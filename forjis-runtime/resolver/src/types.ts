@@ -32,6 +32,28 @@ export interface BuildConfig {
   inspector: InspectorConfig | null;
   /** Optional dev configuration for `forjis dev`. Null when not present. */
   dev: DevConfig | null;
+  /**
+   * File-level context index configuration. Always present; defaults
+   * applied when the build file omits the block. The resolver normalises
+   * omitted / null inputs to fully populated defaults so downstream
+   * consumers never need to re-apply them.
+   */
+  context: ContextConfig;
+}
+
+/**
+ * Configuration for the file-level context index at `.forjis/context/`.
+ *
+ * When `refresh_on_task` is `true` (default), the facilitator invokes
+ * `refreshTreeYaml` before every task dispatch. `inline_top_n` caps the
+ * number of ranked rows the facilitator emits into the per-role context
+ * artefact.
+ */
+export interface ContextConfig {
+  /** Auto-refresh the context index before each task dispatch. Default: true. */
+  refresh_on_task: boolean;
+  /** Max ranked rows to emit per role artefact. Positive integer; default 20. */
+  inline_top_n: number;
 }
 
 /** A reference to a plugin by name. */
