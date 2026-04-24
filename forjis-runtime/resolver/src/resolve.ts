@@ -16,6 +16,7 @@ import { composeRuntime, loadPlugins, resolveTaskRuleIncludes, validateVisualsPa
 import { resolveRepositories } from './repo/index.js';
 import {
   writeConstraintsConfig,
+  writeContextConfig,
   writeHealthCheckConfig,
   writeOrgsConfig,
   writeOutcomesConfig,
@@ -131,6 +132,7 @@ async function runAllWriters(ctx: WriterContext) {
     await writeConstraintsConfig(ctx),
     await writeTokenBudgetConfig(ctx),
     await writeHealthCheckConfig(ctx),
+    await writeContextConfig(ctx),
   ];
 }
 

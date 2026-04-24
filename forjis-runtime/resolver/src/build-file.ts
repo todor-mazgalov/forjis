@@ -16,6 +16,7 @@ import type {
   BuildConfig,
   BuildConstraintsConfig,
   ConstraintIncludeRef,
+  ContextConfig,
   DevConfig,
   HealthCheckConfig,
   InspectorConfig,
@@ -90,6 +91,7 @@ export function parseBuildFile(content: string): BuildConfig {
   const healthCheck = validateHealthCheck(raw['health_check'], errors);
   const inspector = validateInspector(raw['inspector'], errors);
   const dev = validateDev(raw['dev'], errors);
+  const context = validateContext(raw['context'], errors);
 
   if (errors.length > 0) {
     throw new BuildFileValidationError(errors);
@@ -109,6 +111,7 @@ export function parseBuildFile(content: string): BuildConfig {
     healthCheck,
     inspector,
     dev,
+    context,
   };
 }
 
@@ -1574,4 +1577,89 @@ function validateDev(dev: unknown, errors: string[]): DevConfig | null {
   }
 
   return config;
+}
+
+/** Recognized keys within the context block. */
+const CONTEXT_KEYS = new Set(['refresh_on_task', 'inline_top_n']);
+
+/** Default value for `context.refresh_on_task`. */
+const CONTEXT_DEFAULT_REFRESH_ON_TASK = true;
+
+/** Default value for `context.inline_top_n`. */
+const CONTEXT_DEFAULT_INLINE_TOP_N = 20;
+
+/** Minimum accepted integer for `context.inline_top_n`. */
+const CONTEXT_INLINE_TOP_N_MIN = 1;
+
+/** Maximum accepted integer for `context.inline_top_n`. */
+const CONTEXT_INLINE_TOP_N_MAX = 100;
+
+/**
+ * Validates the optional top-level `context` block in the build file.
+ *
+ * Returns a fully populated {@link ContextConfig} with defaults applied
+ * when the block is omitted or explicitly null. Rejects non-object shapes
+ * and unknown keys. Range-checks `inline_top_n` to a positive integer in
+ * the range {@link CONTEXT_INLINE_TOP_N_MIN}..{@link CONTEXT_INLINE_TOP_N_MAX}.
+ *
+ * Errors are appended to the shared aggregator so `parseBuildFile`
+ * surfaces every issue at once. The validator never throws and always
+ * returns a usable ContextConfig (falling back to defaults on invalid
+ * per-field input so downstream consumers get a stable shape).
+ *
+ * @param raw - Raw value read from the YAML tree.
+ * @param errors - Mutable array the validator appends messages to.
+ * @returns The validated {@link ContextConfig} with defaults applied.
+ */
+function validateContext(raw: unknown, errors: string[]): ContextConfig {
+  const defaults: ContextConfig = {
+    refresh_on_task: CONTEXT_DEFAULT_REFRESH_ON_TASK,
+    inline_top_n: CONTEXT_DEFAULT_INLINE_TOP_N,
+  };
+
+  if (raw === undefined || raw === null) {
+    return defaults;
+  }
+
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    errors.push('context: must be a mapping');
+    return defaults;
+  }
+
+  const block = raw as Record<string, unknown>;
+
+  for (const key of Object.keys(block)) {
+    if (!CONTEXT_KEYS.has(key)) {
+      errors.push(
+        `context: unrecognized key "${key}" (expected one of refresh_on_task, inline_top_n)`
+      );
+    }
+  }
+
+  let refreshOnTask = CONTEXT_DEFAULT_REFRESH_ON_TASK;
+  if (block['refresh_on_task'] !== undefined) {
+    if (typeof block['refresh_on_task'] !== 'boolean') {
+      errors.push('context.refresh_on_task: must be a boolean');
+    } else {
+      refreshOnTask = block['refresh_on_task'];
+    }
+  }
+
+  let inlineTopN = CONTEXT_DEFAULT_INLINE_TOP_N;
+  if (block['inline_top_n'] !== undefined) {
+    const val = Number(block['inline_top_n']);
+    if (
+      !Number.isInteger(val) ||
+      val < CONTEXT_INLINE_TOP_N_MIN ||
+      val > CONTEXT_INLINE_TOP_N_MAX
+    ) {
+      errors.push(
+        `context.inline_top_n: must be an integer between ${CONTEXT_INLINE_TOP_N_MIN} and ${CONTEXT_INLINE_TOP_N_MAX}`
+      );
+    } else {
+      inlineTopN = val;
+    }
+  }
+
+  return { refresh_on_task: refreshOnTask, inline_top_n: inlineTopN };
 }

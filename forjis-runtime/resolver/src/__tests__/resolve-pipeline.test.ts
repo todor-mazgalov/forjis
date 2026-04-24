@@ -66,6 +66,7 @@ const EXPECTED_CONFIG_FILES = [
   'constraints.yaml',
   'token-budget.yaml',
   'health-check.yaml',
+  'context.yaml',
 ];
 
 // ---------------------------------------------------------------------------

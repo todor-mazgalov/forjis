@@ -50,6 +50,7 @@ import { resolve } from 'node:path';
 
 import {
   assessCommand,
+  contextRefreshCommand,
   devCommand,
   initCommand,
   personaGenerateCommand,
@@ -333,6 +334,10 @@ async function routeCommand(args: ParsedArgs): Promise<void> {
       await routeTask(args);
       break;
 
+    case 'context':
+      await routeContext(args);
+      break;
+
     case 'version':
       versionCommand();
       break;
@@ -450,6 +455,24 @@ async function routeStrategist(args: ParsedArgs): Promise<void> {
   }
 }
 
+/**
+ * Routes context subcommands (refresh).
+ *
+ * @param args - The parsed CLI arguments.
+ */
+async function routeContext(args: ParsedArgs): Promise<void> {
+  const cwd = process.cwd();
+
+  switch (args.subCommand) {
+    case 'refresh':
+      await contextRefreshCommand(cwd, args.buildFilePath);
+      break;
+
+    default:
+      throw new Error('Usage: forjis context refresh');
+  }
+}
+
 /** Routes task subcommands (create, activate, clean, remove, nuke). */
 async function routeTask(args: ParsedArgs): Promise<void> {
   const cwd = process.cwd();
@@ -524,6 +547,9 @@ function printHelp(command: string | null): void {
       break;
     case 'dev':
       printDevHelp();
+      break;
+    case 'context':
+      printContextHelp();
       break;
     default:
       printUsage();
@@ -601,6 +627,20 @@ Flags:
 `);
 }
 
+/** Prints help for the context subcommand. */
+function printContextHelp(): void {
+  console.log(`
+Usage: forjis context <action> [flags]
+
+Actions:
+  refresh                     Refresh the file-level context index
+
+Flags:
+  -f <path>                   Build file path (default: ./build.forjis)
+  --help                      Show this help message
+`);
+}
+
 /** Prints help for the strategist subcommand. */
 function printStrategistHelp(): void {
   console.log(`
@@ -639,6 +679,7 @@ Resource commands:
   persona create <desc> [-i]       Generate a persona from a description
   persona run [names]              Run persona agents (all or comma-separated)
   strategist run [--loop N]        Run autonomous code scanner
+  context refresh                  Refresh the file-level context index
   registry list                    List available resources
   registry add <url|path>          Add a repository to the build file
 

@@ -98,6 +98,9 @@ function createMinimalBuildConfig(): BuildConfig {
     constraints: { include: [], mandatory: 'Do not push to main.', optional: '', pillars: [] },
     personas: null,
     healthCheck: { interval: 300, maxRetries: 3 },
+    inspector: null,
+    dev: null,
+    context: { refresh_on_task: true, inline_top_n: 20 },
   };
 }
 
