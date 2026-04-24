@@ -13,6 +13,7 @@
  *   forjis validate                     -- validate build file
  *   forjis status                       -- show queue state
  *   forjis stop [task-id]               -- stop running task(s)
+ *   forjis rewind <task-id>             -- tear down a task run
  *   forjis assess <task-id>             -- re-run assessment
  *   forjis version                      -- show component versions
  *   forjis registry list                -- list resources
@@ -58,6 +59,7 @@ import {
   registryAddCommand,
   strategistRunCommand,
   registryListCommand,
+  rewindCommand,
   runCommand,
   statusCommand,
   stopCommand,
@@ -95,6 +97,9 @@ interface ParsedArgs {
   /** Whether `forjis dev --tunnel` should spawn a tunnel tool. */
   tunnel: boolean;
   force: boolean;
+  yes: boolean;
+  keepBranch: boolean;
+  purgeTaskFile: boolean;
   help: boolean;
   loopCount: number | null;
   positional: string[];
@@ -150,6 +155,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     devCwd: null,
     tunnel: false,
     force: false,
+    yes: false,
+    keepBranch: false,
+    purgeTaskFile: false,
     help: false,
     loopCount: null,
     positional: [],
@@ -197,6 +205,24 @@ function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === '--force') {
       result.force = true;
+      i++;
+      continue;
+    }
+
+    if (arg === '--yes') {
+      result.yes = true;
+      i++;
+      continue;
+    }
+
+    if (arg === '--keep-branch') {
+      result.keepBranch = true;
+      i++;
+      continue;
+    }
+
+    if (arg === '--purge-task-file') {
+      result.purgeTaskFile = true;
       i++;
       continue;
     }
@@ -308,6 +334,27 @@ async function routeCommand(args: ParsedArgs): Promise<void> {
     case 'stop':
       await stopCommand(cwd, args.subCommand ?? undefined);
       break;
+
+    case 'rewind': {
+      const taskId = args.subCommand;
+      if (!taskId) {
+        throw new Error('Usage: forjis rewind <task-id>');
+      }
+      const unknownFlags = findUnknownRewindFlags(args.positional);
+      if (unknownFlags.length > 0) {
+        throw new Error(
+          `Unknown flag: ${unknownFlags[0]}\nUsage: forjis rewind <task-id> [--dry-run] [--yes] [--force] [--keep-branch] [--purge-task-file]`,
+        );
+      }
+      await rewindCommand(cwd, taskId, {
+        dryRun: args.dryRun,
+        yes: args.yes,
+        force: args.force,
+        keepBranch: args.keepBranch,
+        purgeTaskFile: args.purgeTaskFile,
+      });
+      break;
+    }
 
     case 'assess': {
       const taskId = args.subCommand;
@@ -551,10 +598,56 @@ function printHelp(command: string | null): void {
     case 'context':
       printContextHelp();
       break;
+    case 'rewind':
+      printRewindHelp();
+      break;
     default:
       printUsage();
       break;
   }
+}
+
+/**
+ * Scans positionals after `rewind <task-id>` for unknown `--`-prefixed
+ * entries. Returns the list of unrecognised flags.
+ */
+function findUnknownRewindFlags(positional: string[]): string[] {
+  const allowed = new Set([
+    '--dry-run',
+    '--yes',
+    '--force',
+    '--keep-branch',
+    '--purge-task-file',
+  ]);
+  const out: string[] = [];
+  for (const item of positional.slice(2)) {
+    if (item.startsWith('--') && !allowed.has(item)) out.push(item);
+  }
+  return out;
+}
+
+/** Prints help for the rewind command. */
+function printRewindHelp(): void {
+  console.log(`
+Usage: forjis rewind <task-id> [flags]
+
+Tears down a task run: deletes the task branch, reverts its stage-merge
+commit if one exists, removes openspec/changes/<id>/ and .forjis/tasks/<id>/,
+invalidates overlapping exploration-cache entries.
+
+Flags:
+  --dry-run              Print the plan; execute nothing. No prompt.
+  --yes                  Skip the standard [y/N] confirmation.
+  --force                Allow rewind on running, dirty, or main-merged states.
+  --keep-branch          Preserve the forjis/<task-id> branch.
+  --purge-task-file      Also remove tasks/<task-id>.{md,txt,yaml,yml}.
+  --help                 Show this help message.
+
+Notes:
+  If 'forjis run --watch' is active, the task file (tasks/<id>.md) remains
+  by default and the watcher may re-queue the task on its next scan.
+  Pass --purge-task-file or underscore-prefix the file to suppress re-pickup.
+`);
 }
 
 /** Prints help for the task subcommand. */
@@ -667,6 +760,7 @@ Framework commands (no resource):
   validate                         Parse and validate the build file
   status                           Show queue state
   stop [task-id]                   Stop running task(s) and kill Claude processes
+  rewind <task-id>                 Tear down a task run (branch, merge, state, cache)
   assess <task-id>                 Re-run outcome assessment
   version                          Show component versions
 

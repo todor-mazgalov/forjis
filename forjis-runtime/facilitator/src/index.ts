@@ -79,6 +79,18 @@ export {
 export { taskCreateCommand } from './commands/task-create.js';
 export { contextRefreshCommand } from './commands/context.js';
 export { ensureGitignoreEntry } from './commands/init.js';
+export {
+  rewindCommand,
+  plan as rewindPlan,
+  execute as rewindExecute,
+} from './rewind/index.js';
+export type {
+  RewindOpts,
+  RewindPlan,
+  RewindOp,
+  RewindResult,
+  TaskRewindState,
+} from './rewind/index.js';
 
 // -- Engine abstraction (no prepare()) --
 export { loadEngine, registerEngine, getRegisteredEngines } from './engine.js';
