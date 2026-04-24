@@ -7,11 +7,48 @@
  */
 
 import { readdir, unlink } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
 import { readYamlFile, writeYamlFile } from '../state.js';
 import { killProcess, readPidFile, pidFilePath } from '../process-utils.js';
 import type { TaskState } from '../types.js';
+
+/** Polls `process.kill(pid, 0)` at 100 ms intervals until the pid dies or the deadline passes. */
+async function waitForExit(pid: number, deadlineMs: number): Promise<boolean> {
+  const end = Date.now() + deadlineMs;
+  while (Date.now() < end) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+/** Hard-kills a pid cross-platform; complements the soft `killProcess`. */
+function hardKill(pid: number): void {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/F', '/PID', String(pid), '/T']);
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    /* already gone */
+  }
+}
+
+/** Stops a pid with SIGTERM grace, then escalates to SIGKILL per D2. */
+async function gracefulStopWithEscalation(pid: number): Promise<void> {
+  killProcess(pid);
+  const exitedAfterTerm = await waitForExit(pid, 5000);
+  if (exitedAfterTerm) return;
+  hardKill(pid);
+  await waitForExit(pid, 2000);
+}
 
 /**
  * Handles the `forjis stop` command.
@@ -50,7 +87,7 @@ export async function stopCommand(projectDir: string, taskId?: string): Promise<
     const pid = await readPidFile(projectDir, dir);
 
     if (pid !== null) {
-      killProcess(pid);
+      await gracefulStopWithEscalation(pid);
       console.log(`[forjis]: killed process tree for task "${dir}" (pid: ${pid})`);
 
       try { await unlink(pidFilePath(projectDir, dir)); } catch { /* ignore */ }
