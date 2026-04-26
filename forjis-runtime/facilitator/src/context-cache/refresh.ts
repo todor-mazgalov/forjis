@@ -222,17 +222,25 @@ async function enumerateCandidates(
   const status = await git(['status', '--porcelain'], repoRoot);
 
   const set = new Set<string>();
+  // runtime-owned: anything under `.forjis/` is written by the facilitator/resolver
+  // and must never be summarised (resolver-cache + plugins.lock churn would
+  // otherwise force re-summarisation on every refresh).
+  const isForjisOwned = (p: string) =>
+    p === '.forjis' || p.startsWith('.forjis/');
+
   if (tracked.exitCode === 0) {
     for (const line of tracked.stdout.split('\n')) {
       const p = line.trim();
-      if (p.length > 0) set.add(p);
+      if (p.length > 0 && !isForjisOwned(p)) set.add(p);
     }
   }
   if (status.exitCode === 0) {
     for (const line of status.stdout.split('\n')) {
       if (line.startsWith('?? ')) {
         const p = line.slice(3).trim();
-        if (p.length > 0 && !p.endsWith('/')) set.add(p);
+        if (p.length > 0 && !p.endsWith('/') && !isForjisOwned(p)) {
+          set.add(p);
+        }
       }
     }
   }
