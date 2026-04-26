@@ -47,13 +47,22 @@ export interface BuildConfig {
  * When `refresh_on_task` is `true` (default), the facilitator invokes
  * `refreshTreeYaml` before every task dispatch. `inline_top_n` caps the
  * number of ranked rows the facilitator emits into the per-role context
- * artefact.
+ * artefact. `engine` selects which registered engine drives summary
+ * generation during the refresh pipeline; absent / undefined means
+ * "use the default engine name applied at the call site".
  */
 export interface ContextConfig {
   /** Auto-refresh the context index before each task dispatch. Default: true. */
   refresh_on_task: boolean;
   /** Max ranked rows to emit per role artefact. Positive integer; default 20. */
   inline_top_n: number;
+  /**
+   * Optional engine name used by the context-cache summariser. When omitted,
+   * the facilitator falls back to `"claude"`. Validated as a non-empty
+   * string at parse time; engine availability is verified lazily inside the
+   * adapter and a missing engine falls through to the empty-summary path.
+   */
+  engine?: string;
 }
 
 /** A reference to a plugin by name. */

@@ -35,9 +35,12 @@ import {
   rankByTask,
   readTreeYaml,
   refreshTreeYaml,
+  summarizeFile,
   writeContextArtefactsForTask,
   type ArtefactRole,
+  type SummarizeOptions,
 } from '../context-cache/index.js';
+import { PromptOptions } from '../types.js';
 import { readFile as readFileAsync } from 'node:fs/promises';
 import { spawn as spawnChild } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -620,7 +623,11 @@ async function runMainLoop(
         contextYaml?.inline_top_n ?? CONTEXT_DEFAULT_INLINE_TOP_N;
       if (refreshOnTask) {
         try {
-          await refreshTreeYaml({ repoRoot: options.projectDir });
+          const summarizeImpl = buildSummarizeImplFromEngine(engine);
+          await refreshTreeYaml({
+            repoRoot: options.projectDir,
+            summarizeImpl,
+          });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.warn(`[context-cache]: refresh skipped — ${msg}`);
@@ -1220,6 +1227,38 @@ function extractReadFilePath(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const fp = (payload as Record<string, unknown>).file_path;
   return typeof fp === 'string' && fp.length > 0 ? fp : null;
+}
+
+/**
+ * Wraps a live {@link ForjisEngine} handle in a summariser-shaped seam
+ * compatible with `summarize.ts`'s `engineInvokeImpl` parameter.
+ *
+ * The adapter combines the static system prompt and the per-file user
+ * prompt with a `\n\n---\n\n` separator before delegating to the
+ * engine's single-string `prompt()` method. Reuses the engine handle
+ * already loaded for task dispatch — never calls `loadEngine` itself.
+ *
+ * @param engine - Live engine handle owned by `runCommand`.
+ * @returns A `summarizeFile`-shaped function that injects the engine
+ *   adapter into every per-file call.
+ */
+function buildSummarizeImplFromEngine(
+  engine: ForjisEngine,
+): typeof summarizeFile {
+  const engineImpl = async (
+    systemPrompt: string,
+    userPrompt: string,
+  ): Promise<string> => {
+    const combined = `${systemPrompt}\n\n---\n\n${userPrompt}`;
+    const opts = new PromptOptions();
+    opts.returnOutput = true;
+    return engine.prompt(combined, opts);
+  };
+  return (input, opts) =>
+    summarizeFile(input, {
+      ...(opts as SummarizeOptions | undefined),
+      engineInvokeImpl: engineImpl,
+    });
 }
 
 /** Threshold fraction at which the budget gate triggers. */

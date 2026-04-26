@@ -757,4 +757,43 @@ describe('parseBuildFile — context block', () => {
       ).toBe(true);
     }
   });
+
+  it('parses context.engine when present and leaves it undefined when absent', () => {
+    const omitted = parseBuildFile(baseYaml);
+    expect(omitted.context.engine).toBeUndefined();
+
+    const withEngine = parseBuildFile(
+      [
+        ...baseYaml.split('\n'),
+        'context:',
+        '  engine: claude',
+      ].join('\n'),
+    );
+    expect(withEngine.context.engine).toBe('claude');
+  });
+
+  it('rejects context.engine when empty or non-string', () => {
+    const empty = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  engine: ""',
+    ].join('\n');
+    expect(() => parseBuildFile(empty)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(empty);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes('context.engine'),
+        ),
+      ).toBe(true);
+    }
+
+    const wrongType = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  engine: 42',
+    ].join('\n');
+    expect(() => parseBuildFile(wrongType)).toThrow(BuildFileValidationError);
+  });
 });

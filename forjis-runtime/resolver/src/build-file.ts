@@ -1580,7 +1580,7 @@ function validateDev(dev: unknown, errors: string[]): DevConfig | null {
 }
 
 /** Recognized keys within the context block. */
-const CONTEXT_KEYS = new Set(['refresh_on_task', 'inline_top_n']);
+const CONTEXT_KEYS = new Set(['refresh_on_task', 'inline_top_n', 'engine']);
 
 /** Default value for `context.refresh_on_task`. */
 const CONTEXT_DEFAULT_REFRESH_ON_TASK = true;
@@ -1631,7 +1631,7 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
   for (const key of Object.keys(block)) {
     if (!CONTEXT_KEYS.has(key)) {
       errors.push(
-        `context: unrecognized key "${key}" (expected one of refresh_on_task, inline_top_n)`
+        `context: unrecognized key "${key}" (expected one of refresh_on_task, inline_top_n, engine)`
       );
     }
   }
@@ -1661,5 +1661,18 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
     }
   }
 
-  return { refresh_on_task: refreshOnTask, inline_top_n: inlineTopN };
+  const result: ContextConfig = {
+    refresh_on_task: refreshOnTask,
+    inline_top_n: inlineTopN,
+  };
+
+  if (block['engine'] !== undefined) {
+    if (typeof block['engine'] !== 'string' || block['engine'].length === 0) {
+      errors.push('context.engine: must be a non-empty string');
+    } else {
+      result.engine = block['engine'];
+    }
+  }
+
+  return result;
 }
