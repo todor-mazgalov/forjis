@@ -38,9 +38,10 @@ import {
   summarizeFile,
   writeContextArtefactsForTask,
   type ArtefactRole,
+  type SummarizeInput,
   type SummarizeOptions,
 } from '../context-cache/index.js';
-import { PromptOptions } from '../types.js';
+import { tryLoadEngineImpl } from './context.js';
 import { readFile as readFileAsync } from 'node:fs/promises';
 import { spawn as spawnChild } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -623,9 +624,17 @@ async function runMainLoop(
         contextYaml?.inline_top_n ?? CONTEXT_DEFAULT_INLINE_TOP_N;
       const concurrency =
         contextYaml?.concurrency ?? CONTEXT_DEFAULT_CONCURRENCY;
+      const contextModel = contextYaml?.model ?? CONTEXT_DEFAULT_MODEL;
       if (refreshOnTask) {
         try {
-          const summarizeImpl = buildSummarizeImplFromEngine(engine);
+          const engineImpl = await tryLoadEngineImpl(engine.name, contextModel);
+          const summarizeImpl = engineImpl
+            ? (input: SummarizeInput, opts?: SummarizeOptions) =>
+                summarizeFile(input, {
+                  ...opts,
+                  engineInvokeImpl: engineImpl,
+                })
+            : undefined;
           await refreshTreeYaml({
             repoRoot: options.projectDir,
             summarizeImpl,
@@ -1104,6 +1113,8 @@ interface ContextYamlFile {
   refresh_on_task?: boolean;
   inline_top_n?: number;
   concurrency?: number;
+  engine?: string;
+  model?: string;
 }
 
 /** Default for `context.refresh_on_task` when the file is absent. */
@@ -1114,6 +1125,9 @@ const CONTEXT_DEFAULT_INLINE_TOP_N = 20;
 
 /** Default for `context.concurrency` when the file is absent. */
 const CONTEXT_DEFAULT_CONCURRENCY = 16;
+
+/** Default for `context.model` when the file is absent. Mirrors the resolver default. */
+const CONTEXT_DEFAULT_MODEL = 'sonnet';
 
 /** Regex used to extract path-like tokens from TASK.md + exploration.md. */
 const CANDIDATE_PATH_REGEX =
@@ -1234,42 +1248,6 @@ function extractReadFilePath(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const fp = (payload as Record<string, unknown>).file_path;
   return typeof fp === 'string' && fp.length > 0 ? fp : null;
-}
-
-/**
- * Wraps a live {@link ForjisEngine} handle in a summariser-shaped seam
- * compatible with `summarize.ts`'s `engineInvokeImpl` parameter.
- *
- * The adapter combines the static system prompt and the per-file user
- * prompt with a `\n\n---\n\n` separator before delegating to the
- * engine's single-string `prompt()` method. Reuses the engine handle
- * already loaded for task dispatch — never calls `loadEngine` itself.
- *
- * @param engine - Live engine handle owned by `runCommand`.
- * @returns A `summarizeFile`-shaped function that injects the engine
- *   adapter into every per-file call.
- */
-function buildSummarizeImplFromEngine(
-  engine: ForjisEngine,
-): typeof summarizeFile {
-  const engineImpl = async (
-    systemPrompt: string,
-    userPrompt: string,
-  ): Promise<string> => {
-    const combined = `${systemPrompt}\n\n---\n\n${userPrompt}`;
-    const opts = new PromptOptions();
-    opts.returnOutput = true;
-    // Suppress per-call subprocess exit lines under parallelism — the
-    // throttled `[context-cache]: X/Y summarized` reporter is the
-    // sole operator-visible signal during a refresh.
-    opts.silent = true;
-    return engine.prompt(combined, opts);
-  };
-  return (input, opts) =>
-    summarizeFile(input, {
-      ...(opts as SummarizeOptions | undefined),
-      engineInvokeImpl: engineImpl,
-    });
 }
 
 /** Threshold fraction at which the budget gate triggers. */

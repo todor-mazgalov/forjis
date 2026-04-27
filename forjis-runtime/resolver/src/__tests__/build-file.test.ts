@@ -949,4 +949,75 @@ describe('parseBuildFile — context block', () => {
       ).toBe(true);
     }
   });
+
+  it('parses context.model when present and returns the value verbatim', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  model: haiku',
+    ].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.context.model).toBe('haiku');
+  });
+
+  it('defaults context.model to "sonnet" when the field is omitted', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  refresh_on_task: true',
+    ].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.context.model).toBe('sonnet');
+  });
+
+  it('defaults context.model to "sonnet" when the entire context block is omitted', () => {
+    const config = parseBuildFile(baseYaml);
+    expect(config.context.model).toBe('sonnet');
+  });
+
+  it('parses a versioned model identifier verbatim without restriction', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  model: claude-sonnet-4-6',
+    ].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.context.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('rejects context.model: "" with a message naming the field', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  model: ""',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes('context.model'),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('lists model in the unknown-key error message', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  totally_unknown: true',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes('model'),
+        ),
+      ).toBe(true);
+    }
+  });
 });

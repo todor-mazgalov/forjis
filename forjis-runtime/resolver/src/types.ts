@@ -74,6 +74,11 @@ export interface ContextConfig {
    * prevents accidental fork-bomb on a 64-core box).
    */
   concurrency: number;
+  /**
+   * Optional; defaults to 'sonnet'. Forwarded to PromptOptions.model
+   * by the context-cache summariser.
+   */
+  model?: string;
 }
 
 /** A reference to a plugin by name. */

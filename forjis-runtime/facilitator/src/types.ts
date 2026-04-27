@@ -236,4 +236,15 @@ export class PromptOptions {
    * instead of N interleaved per-call exit lines.
    */
   silent?: boolean;
+  /**
+   * When set, the engine passes this value as the model identifier
+   * (e.g. `--model sonnet` for the Claude CLI). Use family aliases
+   * (`sonnet`, `haiku`, `opus`) rather than versioned IDs so the
+   * configuration tracks the latest in-family release without
+   * needing periodic updates. When undefined, the engine spawns
+   * without a model flag and inherits the underlying CLI's default.
+   * Only the context-cache summarise adapter currently sets this;
+   * all other call sites leave it undefined.
+   */
+  model?: string;
 }

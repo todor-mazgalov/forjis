@@ -246,6 +246,9 @@ export class ClaudeEngine implements ForjisEngine {
       for (const tool of options.allowedTools) {
         args.push('--allowedTools', tool);
       }
+      if (options.model !== undefined && options.model.length > 0) {
+        args.push('--model', options.model);
+      }
       args.push('-');
 
       const childOptions: SpawnOptionsWithoutStdio = {

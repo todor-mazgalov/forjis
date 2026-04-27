@@ -3,7 +3,7 @@
  *
  * Generates `.forjis/config/context.yaml` containing the resolved
  * file-level context index configuration (`refresh_on_task`,
- * `inline_top_n`, `concurrency`).
+ * `inline_top_n`, `concurrency`, optional `engine`, and `model`).
  */
 
 import { join } from 'node:path';
@@ -31,11 +31,17 @@ const FILE_NAME = 'context.yaml';
 export async function writeContextConfig(ctx: WriterContext): Promise<WriteResult> {
   const config: ContextConfig = ctx.buildConfig.context;
 
-  const data = {
+  const data: Record<string, unknown> = {
     refresh_on_task: config.refresh_on_task,
     inline_top_n: config.inline_top_n,
     concurrency: config.concurrency,
   };
+  if (config.engine !== undefined) {
+    data['engine'] = config.engine;
+  }
+  if (config.model !== undefined) {
+    data['model'] = config.model;
+  }
 
   const content = stringifyYaml(data, { indent: 2 });
   const hash = computeHash(content);
@@ -70,11 +76,17 @@ export async function writeContextYaml(
   outDir: string,
   config: ContextConfig,
 ): Promise<void> {
-  const data = {
+  const data: Record<string, unknown> = {
     refresh_on_task: config.refresh_on_task,
     inline_top_n: config.inline_top_n,
     concurrency: config.concurrency,
   };
+  if (config.engine !== undefined) {
+    data['engine'] = config.engine;
+  }
+  if (config.model !== undefined) {
+    data['model'] = config.model;
+  }
   const content = stringifyYaml(data, { indent: 2 });
   await ensureDir(outDir);
   await atomicWriteFile(join(outDir, FILE_NAME), content);

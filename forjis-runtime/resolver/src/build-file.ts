@@ -1585,6 +1585,7 @@ const CONTEXT_KEYS = new Set([
   'inline_top_n',
   'engine',
   'concurrency',
+  'model',
 ]);
 
 /** Default value for `context.refresh_on_task`. */
@@ -1609,6 +1610,13 @@ const CONTEXT_CONCURRENCY_MIN = 1;
 const CONTEXT_CONCURRENCY_MAX = 32;
 
 /**
+ * Default value for `context.model`. The summariser uses the family alias
+ * `sonnet` so the configuration tracks the latest in-family release without
+ * needing periodic updates.
+ */
+const CONTEXT_DEFAULT_MODEL = 'sonnet';
+
+/**
  * Validates the optional top-level `context` block in the build file.
  *
  * Returns a fully populated {@link ContextConfig} with defaults applied
@@ -1630,6 +1638,7 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
     refresh_on_task: CONTEXT_DEFAULT_REFRESH_ON_TASK,
     inline_top_n: CONTEXT_DEFAULT_INLINE_TOP_N,
     concurrency: CONTEXT_DEFAULT_CONCURRENCY,
+    model: CONTEXT_DEFAULT_MODEL,
   };
 
   if (raw === undefined || raw === null) {
@@ -1646,7 +1655,7 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
   for (const key of Object.keys(block)) {
     if (!CONTEXT_KEYS.has(key)) {
       errors.push(
-        `context: unrecognized key "${key}" (expected one of refresh_on_task, inline_top_n, engine, concurrency)`
+        `context: unrecognized key "${key}" (expected one of refresh_on_task, inline_top_n, engine, concurrency, model)`
       );
     }
   }
@@ -1701,6 +1710,7 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
     refresh_on_task: refreshOnTask,
     inline_top_n: inlineTopN,
     concurrency,
+    model: CONTEXT_DEFAULT_MODEL,
   };
 
   if (block['engine'] !== undefined) {
@@ -1708,6 +1718,14 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
       errors.push('context.engine: must be a non-empty string');
     } else {
       result.engine = block['engine'];
+    }
+  }
+
+  if (block['model'] !== undefined) {
+    if (typeof block['model'] !== 'string' || block['model'].length === 0) {
+      errors.push('context.model: must be a non-empty string');
+    } else {
+      result.model = block['model'];
     }
   }
 

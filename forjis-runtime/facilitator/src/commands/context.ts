@@ -64,7 +64,7 @@ export async function contextRefreshCommand(
 
   const contextCfg = await readContextConfig(absBuildFile);
   const engineName = contextCfg.engine ?? DEFAULT_CONTEXT_ENGINE;
-  const engineImpl = await tryLoadEngineImpl(engineName);
+  const engineImpl = await tryLoadEngineImpl(engineName, contextCfg.model);
 
   const result = await refreshTreeYaml({
     repoRoot: projectDir,
@@ -118,11 +118,18 @@ async function readContextConfig(
  * content or engine output.
  *
  * @param engineName - Engine name read from the resolved configuration.
+ * @param model - Optional model identifier (family alias such as
+ *   `sonnet` / `haiku` / `opus`, or a versioned ID). When a non-empty
+ *   string, every constructed {@link PromptOptions} carries
+ *   `model = <value>` so the engine appends `--model <value>` to its
+ *   spawn args. When `undefined` or empty, the model flag is omitted
+ *   and the underlying CLI's default applies.
  * @returns A summariser-shaped adapter, or `undefined` when the engine
  *   cannot be loaded for any reason.
  */
 export async function tryLoadEngineImpl(
   engineName: string,
+  model?: string,
 ): Promise<EngineInvokeImpl | undefined> {
   let engine;
   try {
@@ -142,6 +149,9 @@ export async function tryLoadEngineImpl(
     // throttled `[context-cache]: X/Y summarized` reporter is the
     // sole operator-visible signal during a refresh.
     opts.silent = true;
+    if (model !== undefined && model.length > 0) {
+      opts.model = model;
+    }
     return engine.prompt(combined, opts);
   };
 }
