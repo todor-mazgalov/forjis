@@ -24,6 +24,7 @@ export {
 
 export {
   refreshTreeYaml,
+  makeProgressReporter,
   type RefreshOptions,
   type RefreshResult,
 } from './refresh.js';

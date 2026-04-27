@@ -100,7 +100,7 @@ function createMinimalBuildConfig(): BuildConfig {
     healthCheck: { interval: 300, maxRetries: 3 },
     inspector: null,
     dev: null,
-    context: { refresh_on_task: true, inline_top_n: 20 },
+    context: { refresh_on_task: true, inline_top_n: 20, concurrency: 16 },
   };
 }
 

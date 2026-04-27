@@ -49,6 +49,18 @@ const DEFAULT_HIGH_TRAFFIC_COMMITS = 200;
 /** Warning-line prefix shared with the rest of the context-cache module. */
 const WARN_PREFIX = '[context-cache]:';
 
+/** Default concurrency for the per-file summariser worker pool. */
+const DEFAULT_CONCURRENCY = 16;
+
+/** Minimum allowed concurrency — clamped at runtime as defence-in-depth. */
+const CONCURRENCY_MIN = 1;
+
+/** Maximum allowed concurrency — caps fork-bomb risk on large hosts. */
+const CONCURRENCY_MAX = 32;
+
+/** Throttle window for the progress reporter (milliseconds). */
+const PROGRESS_THROTTLE_MS = 1000;
+
 /** Options accepted by {@link refreshTreeYaml}. */
 export interface RefreshOptions {
   /** Absolute project root. */
@@ -67,6 +79,14 @@ export interface RefreshOptions {
   now?: () => Date;
   /** Warning sink. Defaults to `console.warn`. */
   warn?: (msg: string) => void;
+  /**
+   * Concurrency bound for the per-file summariser worker pool. Default
+   * `16`. Clamped at runtime to `[1, 32]` regardless of upstream
+   * validation — direct programmatic callers (tests, future
+   * non-resolver consumers) cannot fork-bomb the host through this
+   * seam.
+   */
+  concurrency?: number;
 }
 
 /** Return shape of {@link refreshTreeYaml}. */
@@ -111,6 +131,36 @@ export async function refreshTreeYaml(
   }
 }
 
+/**
+ * Builds a throttled progress reporter for the refresh pipeline.
+ *
+ * Returns a closure that increments an internal `done` counter on every
+ * call and emits `[context-cache]: <done>/<total> summarized` via
+ * `warn` at most once per second. The final emission (when
+ * `done === total`) bypasses the throttle so the operator always sees a
+ * terminating line — even when a tail of fast cache-hits completes in
+ * the same millisecond as the previous emission.
+ *
+ * @param total - Total number of progress steps expected.
+ * @param warn - Warning sink used for the emitted lines.
+ * @returns A function that advances the progress and emits when due.
+ */
+export function makeProgressReporter(
+  total: number,
+  warn: (msg: string) => void,
+): () => void {
+  let done = 0;
+  let lastEmit = 0;
+  return () => {
+    done++;
+    const now = Date.now();
+    if (done === total || now - lastEmit >= PROGRESS_THROTTLE_MS) {
+      warn(`${WARN_PREFIX} ${done}/${total} summarized`);
+      lastEmit = now;
+    }
+  };
+}
+
 /** Actual pipeline; extracted so the outer wrapper can own try/catch cleanly. */
 async function runPipeline(
   opts: RefreshOptions,
@@ -122,6 +172,13 @@ async function runPipeline(
   const commitWindow = opts.highTrafficCommits ?? DEFAULT_HIGH_TRAFFIC_COMMITS;
   const git = opts.gitImpl ?? runGit;
   const summarize = opts.summarizeImpl ?? summarizeFile;
+  // Defence-in-depth: clamp at the pool entry so a stale config or a
+  // direct programmatic caller bypassing resolver validation can never
+  // fork-bomb the host.
+  const concurrency = Math.max(
+    CONCURRENCY_MIN,
+    Math.min(opts.concurrency ?? DEFAULT_CONCURRENCY, CONCURRENCY_MAX),
+  );
 
   const candidates = await enumerateCandidates(git, repoRoot);
   const contextDir = join(repoRoot, '.forjis', 'context');
@@ -139,7 +196,15 @@ async function runPipeline(
   let keptCount = 0;
   let skippedCount = 0;
 
-  for (const relPath of candidates) {
+  // The reporter's `total` counts every file in the candidate set
+  // (including those filtered to null). Skipped files also fire
+  // `progress()` so the final `<total>/<total>` line is reachable in
+  // every run shape — including warm refreshes where every candidate
+  // takes the kept-from-cache short-circuit.
+  const progress = makeProgressReporter(candidates.length, warn);
+
+  type Job = () => Promise<void>;
+  const jobs: Job[] = candidates.map((relPath) => async () => {
     const filtered = await filterAndRead(
       repoRoot,
       relPath,
@@ -148,7 +213,8 @@ async function runPipeline(
     );
     if (filtered === null) {
       skippedCount++;
-      continue;
+      progress();
+      return;
     }
     const { content } = filtered;
     const oid = computeBlobOid(content);
@@ -156,15 +222,27 @@ async function runPipeline(
     if (old && old.oid === oid) {
       newFiles.push({ path: relPath, oid, summary: old.summary });
       keptCount++;
-      continue;
+      progress();
+      return;
     }
-    const result = await summarize(
-      { path: relPath, content },
-      { warn },
-    );
+    const result = await summarize({ path: relPath, content }, { warn });
     newFiles.push({ path: relPath, oid, summary: result.summary });
     summarizedCount++;
-  }
+    progress();
+  });
+
+  // JS is single-threaded, so the `cursor++` increment is atomic from
+  // the language's perspective — no locking needed for the shared
+  // counter or the shared `newFiles`/counter mutations inside jobs.
+  let cursor = 0;
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (cursor < jobs.length) {
+      const job = jobs[cursor++];
+      if (job === undefined) return;
+      await job();
+    }
+  });
+  await Promise.all(workers);
 
   // dropped: old entries no longer in the candidate set (including those
   // that still exist but are now skipped for binary/oversize).

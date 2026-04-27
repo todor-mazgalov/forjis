@@ -39,6 +39,7 @@ describe('writeContextConfig', () => {
     const parsed = parseYaml(content) as Record<string, unknown>;
     expect(parsed['refresh_on_task']).toBe(true);
     expect(parsed['inline_top_n']).toBe(20);
+    expect(parsed['concurrency']).toBe(16);
   });
 
   it('skips write when checksum is unchanged', async () => {
@@ -52,7 +53,11 @@ describe('writeContextConfig', () => {
 
   it('emits explicit false / custom inline_top_n when present in build config', async () => {
     const ctx = createTestContext(tmpDir);
-    ctx.buildConfig.context = { refresh_on_task: false, inline_top_n: 5 };
+    ctx.buildConfig.context = {
+      refresh_on_task: false,
+      inline_top_n: 5,
+      concurrency: 8,
+    };
 
     await writeContextConfig(ctx);
     const content = await readFile(
@@ -62,5 +67,6 @@ describe('writeContextConfig', () => {
     const parsed = parseYaml(content) as Record<string, unknown>;
     expect(parsed['refresh_on_task']).toBe(false);
     expect(parsed['inline_top_n']).toBe(5);
+    expect(parsed['concurrency']).toBe(8);
   });
 });

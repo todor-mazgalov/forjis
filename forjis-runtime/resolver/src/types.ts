@@ -50,6 +50,8 @@ export interface BuildConfig {
  * artefact. `engine` selects which registered engine drives summary
  * generation during the refresh pipeline; absent / undefined means
  * "use the default engine name applied at the call site".
+ * `concurrency` bounds the worker pool that drives per-file
+ * summarisation in `refreshTreeYaml`; default 16, range 1–32 inclusive.
  */
 export interface ContextConfig {
   /** Auto-refresh the context index before each task dispatch. Default: true. */
@@ -63,6 +65,15 @@ export interface ContextConfig {
    * adapter and a missing engine falls through to the empty-summary path.
    */
   engine?: string;
+  /**
+   * Bound on the worker-pool concurrency that drives per-file
+   * summarisation in `refreshTreeYaml`. Required field on the resolved
+   * surface; the validator falls back to a default of 16 when the
+   * build file omits the key. Allowed range is 1..32 inclusive
+   * (1 reproduces today's serial behaviour; 32 is the ceiling that
+   * prevents accidental fork-bomb on a 64-core box).
+   */
+  concurrency: number;
 }
 
 /** A reference to a plugin by name. */

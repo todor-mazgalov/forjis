@@ -1580,7 +1580,12 @@ function validateDev(dev: unknown, errors: string[]): DevConfig | null {
 }
 
 /** Recognized keys within the context block. */
-const CONTEXT_KEYS = new Set(['refresh_on_task', 'inline_top_n', 'engine']);
+const CONTEXT_KEYS = new Set([
+  'refresh_on_task',
+  'inline_top_n',
+  'engine',
+  'concurrency',
+]);
 
 /** Default value for `context.refresh_on_task`. */
 const CONTEXT_DEFAULT_REFRESH_ON_TASK = true;
@@ -1593,6 +1598,15 @@ const CONTEXT_INLINE_TOP_N_MIN = 1;
 
 /** Maximum accepted integer for `context.inline_top_n`. */
 const CONTEXT_INLINE_TOP_N_MAX = 100;
+
+/** Default value for `context.concurrency` — bounds the summariser worker pool. */
+const CONTEXT_DEFAULT_CONCURRENCY = 16;
+
+/** Minimum accepted integer for `context.concurrency`. */
+const CONTEXT_CONCURRENCY_MIN = 1;
+
+/** Maximum accepted integer for `context.concurrency` — caps fork-bomb risk on large hosts. */
+const CONTEXT_CONCURRENCY_MAX = 32;
 
 /**
  * Validates the optional top-level `context` block in the build file.
@@ -1615,6 +1629,7 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
   const defaults: ContextConfig = {
     refresh_on_task: CONTEXT_DEFAULT_REFRESH_ON_TASK,
     inline_top_n: CONTEXT_DEFAULT_INLINE_TOP_N,
+    concurrency: CONTEXT_DEFAULT_CONCURRENCY,
   };
 
   if (raw === undefined || raw === null) {
@@ -1631,7 +1646,7 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
   for (const key of Object.keys(block)) {
     if (!CONTEXT_KEYS.has(key)) {
       errors.push(
-        `context: unrecognized key "${key}" (expected one of refresh_on_task, inline_top_n, engine)`
+        `context: unrecognized key "${key}" (expected one of refresh_on_task, inline_top_n, engine, concurrency)`
       );
     }
   }
@@ -1661,9 +1676,31 @@ function validateContext(raw: unknown, errors: string[]): ContextConfig {
     }
   }
 
+  let concurrency = CONTEXT_DEFAULT_CONCURRENCY;
+  if (block['concurrency'] !== undefined) {
+    // Reject string-typed numerics (`"8"`) explicitly so coerced inputs
+    // never sneak past the `Number()` parse below; spec FR demands the
+    // same error message for non-integer and out-of-range cases.
+    const rawVal = block['concurrency'];
+    const isNumericPrimitive = typeof rawVal === 'number';
+    const val = isNumericPrimitive ? rawVal : NaN;
+    if (
+      !Number.isInteger(val) ||
+      val < CONTEXT_CONCURRENCY_MIN ||
+      val > CONTEXT_CONCURRENCY_MAX
+    ) {
+      errors.push(
+        `context.concurrency: must be an integer between ${CONTEXT_CONCURRENCY_MIN} and ${CONTEXT_CONCURRENCY_MAX}`
+      );
+    } else {
+      concurrency = val;
+    }
+  }
+
   const result: ContextConfig = {
     refresh_on_task: refreshOnTask,
     inline_top_n: inlineTopN,
+    concurrency,
   };
 
   if (block['engine'] !== undefined) {

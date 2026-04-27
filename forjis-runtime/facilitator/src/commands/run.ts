@@ -621,12 +621,15 @@ async function runMainLoop(
         contextYaml?.refresh_on_task ?? CONTEXT_DEFAULT_REFRESH_ON_TASK;
       const inlineTopN =
         contextYaml?.inline_top_n ?? CONTEXT_DEFAULT_INLINE_TOP_N;
+      const concurrency =
+        contextYaml?.concurrency ?? CONTEXT_DEFAULT_CONCURRENCY;
       if (refreshOnTask) {
         try {
           const summarizeImpl = buildSummarizeImplFromEngine(engine);
           await refreshTreeYaml({
             repoRoot: options.projectDir,
             summarizeImpl,
+            concurrency,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -1100,6 +1103,7 @@ async function resolveVisualsForRoles(
 interface ContextYamlFile {
   refresh_on_task?: boolean;
   inline_top_n?: number;
+  concurrency?: number;
 }
 
 /** Default for `context.refresh_on_task` when the file is absent. */
@@ -1107,6 +1111,9 @@ const CONTEXT_DEFAULT_REFRESH_ON_TASK = true;
 
 /** Default for `context.inline_top_n` when the file is absent. */
 const CONTEXT_DEFAULT_INLINE_TOP_N = 20;
+
+/** Default for `context.concurrency` when the file is absent. */
+const CONTEXT_DEFAULT_CONCURRENCY = 16;
 
 /** Regex used to extract path-like tokens from TASK.md + exploration.md. */
 const CANDIDATE_PATH_REGEX =
@@ -1252,6 +1259,10 @@ function buildSummarizeImplFromEngine(
     const combined = `${systemPrompt}\n\n---\n\n${userPrompt}`;
     const opts = new PromptOptions();
     opts.returnOutput = true;
+    // Suppress per-call subprocess exit lines under parallelism — the
+    // throttled `[context-cache]: X/Y summarized` reporter is the
+    // sole operator-visible signal during a refresh.
+    opts.silent = true;
     return engine.prompt(combined, opts);
   };
   return (input, opts) =>

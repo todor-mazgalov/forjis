@@ -12,7 +12,10 @@
 
 import { resolve as resolvePath } from 'node:path';
 
-import { resolve as resolveConfig } from '@forjis/resolver';
+import {
+  resolve as resolveConfig,
+  type ContextConfig,
+} from '@forjis/resolver';
 
 import {
   refreshTreeYaml,
@@ -59,11 +62,13 @@ export async function contextRefreshCommand(
   // `configDir` is always `<projectDir>/.forjis/config` — two parents up.
   const projectDir = resolvePath(configResult.configDir, '..', '..');
 
-  const engineName = await readContextEngineName(absBuildFile);
+  const contextCfg = await readContextConfig(absBuildFile);
+  const engineName = contextCfg.engine ?? DEFAULT_CONTEXT_ENGINE;
   const engineImpl = await tryLoadEngineImpl(engineName);
 
   const result = await refreshTreeYaml({
     repoRoot: projectDir,
+    concurrency: contextCfg.concurrency,
     summarizeImpl: engineImpl
       ? (input, opts) =>
           summarizeFile(input, {
@@ -78,20 +83,22 @@ export async function contextRefreshCommand(
 }
 
 /**
- * Reads the resolved `context.engine` name straight from the build file.
+ * Reads the resolved {@link ContextConfig} from the build file.
  *
- * Returns the explicit value when set, otherwise falls back to the
- * default registered engine name. The build file has already been
- * shape-validated by the time this helper runs.
+ * The build file has already been shape-validated by the time this
+ * helper runs, so the resolver guarantees a fully-populated
+ * {@link ContextConfig} (defaults applied for omitted keys).
  *
  * @param buildFilePath - Absolute path to the build file.
- * @returns The engine name to feed into {@link loadEngine}.
+ * @returns The validated context configuration.
  */
-async function readContextEngineName(buildFilePath: string): Promise<string> {
+async function readContextConfig(
+  buildFilePath: string,
+): Promise<ContextConfig> {
   const { loadBuildFile, parseBuildFile } = await import('@forjis/resolver');
   const content = await loadBuildFile(buildFilePath);
   const config = parseBuildFile(content);
-  return config.context.engine ?? DEFAULT_CONTEXT_ENGINE;
+  return config.context;
 }
 
 /**
@@ -131,6 +138,10 @@ export async function tryLoadEngineImpl(
     const combined = `${systemPrompt}\n\n---\n\n${userPrompt}`;
     const opts = new PromptOptions();
     opts.returnOutput = true;
+    // Suppress per-call subprocess exit lines under parallelism — the
+    // throttled `[context-cache]: X/Y summarized` reporter is the
+    // sole operator-visible signal during a refresh.
+    opts.silent = true;
     return engine.prompt(combined, opts);
   };
 }

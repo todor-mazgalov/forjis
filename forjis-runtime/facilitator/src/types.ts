@@ -223,4 +223,17 @@ export class PromptOptions {
    * inspector-clarify from a normal pipeline run.
    */
   inspectorClarify?: boolean;
+  /**
+   * When `true`, the engine MUST suppress the success-path
+   * `[engine]: claude subprocess exited (code: <code>)` log line.
+   * Reject paths (non-zero exit, spawn error, watchdog timeout) are
+   * unaffected and keep their existing `console.error` emissions.
+   *
+   * Default `undefined` preserves today's behaviour for every other
+   * caller. Set to `true` only by the context-cache summariser
+   * adapters so a parallel refresh produces a single throttled
+   * `[context-cache]: <done>/<total> summarized` progress line
+   * instead of N interleaved per-call exit lines.
+   */
+  silent?: boolean;
 }

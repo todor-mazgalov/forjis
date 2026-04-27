@@ -455,7 +455,12 @@ export class ClaudeEngine implements ForjisEngine {
         deregisterChild();
         if (settled) return;
         settled = true;
-        console.log(`[engine]: claude subprocess exited (code: ${code})`);
+        // `silent` only suppresses the success-path informational
+        // emission; reject paths below keep their existing
+        // `console.error` / `EngineInvocationError` plumbing.
+        if (!options.silent) {
+          console.log(`[engine]: claude subprocess exited (code: ${code})`);
+        }
         if (code !== 0) {
           reject(new EngineInvocationError(options.id ?? "engine", new Error(`Exit code ${code}: ${stderr}`)));
         } else {

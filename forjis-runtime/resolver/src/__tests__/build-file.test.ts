@@ -796,4 +796,157 @@ describe('parseBuildFile — context block', () => {
     ].join('\n');
     expect(() => parseBuildFile(wrongType)).toThrow(BuildFileValidationError);
   });
+
+  it('defaults context.concurrency to 16 when the field is omitted', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  refresh_on_task: true',
+    ].join('\n');
+    const config = parseBuildFile(yaml);
+    expect(config.context.concurrency).toBe(16);
+  });
+
+  it('defaults context.concurrency to 16 when the entire context block is omitted', () => {
+    const config = parseBuildFile(baseYaml);
+    expect(config.context.concurrency).toBe(16);
+  });
+
+  it('accepts context.concurrency boundary values 1 and 32', () => {
+    const lower = parseBuildFile(
+      [
+        ...baseYaml.split('\n'),
+        'context:',
+        '  concurrency: 1',
+      ].join('\n'),
+    );
+    expect(lower.context.concurrency).toBe(1);
+
+    const upper = parseBuildFile(
+      [
+        ...baseYaml.split('\n'),
+        'context:',
+        '  concurrency: 32',
+      ].join('\n'),
+    );
+    expect(upper.context.concurrency).toBe(32);
+  });
+
+  it('rejects context.concurrency: 0 with the documented message', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  concurrency: 0',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes(
+            'context.concurrency: must be an integer between 1 and 32',
+          ),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('rejects context.concurrency: 33 (above range)', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  concurrency: 33',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes(
+            'context.concurrency: must be an integer between 1 and 32',
+          ),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('rejects context.concurrency: 100 (well above range)', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  concurrency: 100',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes(
+            'context.concurrency: must be an integer between 1 and 32',
+          ),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('rejects non-integer context.concurrency: 4.5', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  concurrency: 4.5',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes(
+            'context.concurrency: must be an integer between 1 and 32',
+          ),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('rejects string-typed context.concurrency: "8"', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  concurrency: "8"',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes(
+            'context.concurrency: must be an integer between 1 and 32',
+          ),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('lists concurrency in the unknown-key error message', () => {
+    const yaml = [
+      ...baseYaml.split('\n'),
+      'context:',
+      '  refresh_on_xyz: true',
+    ].join('\n');
+    expect(() => parseBuildFile(yaml)).toThrow(BuildFileValidationError);
+    try {
+      parseBuildFile(yaml);
+    } catch (err) {
+      expect(
+        (err as BuildFileValidationError).errors.some((e) =>
+          e.includes('concurrency'),
+        ),
+      ).toBe(true);
+    }
+  });
 });

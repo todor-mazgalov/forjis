@@ -2,7 +2,8 @@
  * Context config file writer.
  *
  * Generates `.forjis/config/context.yaml` containing the resolved
- * file-level context index configuration (`refresh_on_task`, `inline_top_n`).
+ * file-level context index configuration (`refresh_on_task`,
+ * `inline_top_n`, `concurrency`).
  */
 
 import { join } from 'node:path';
@@ -33,6 +34,7 @@ export async function writeContextConfig(ctx: WriterContext): Promise<WriteResul
   const data = {
     refresh_on_task: config.refresh_on_task,
     inline_top_n: config.inline_top_n,
+    concurrency: config.concurrency,
   };
 
   const content = stringifyYaml(data, { indent: 2 });
@@ -71,6 +73,7 @@ export async function writeContextYaml(
   const data = {
     refresh_on_task: config.refresh_on_task,
     inline_top_n: config.inline_top_n,
+    concurrency: config.concurrency,
   };
   const content = stringifyYaml(data, { indent: 2 });
   await ensureDir(outDir);
