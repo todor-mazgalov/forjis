@@ -151,6 +151,25 @@ export interface InvocationContext {
   eventLog: string[];
   /** Maps tool_use id to tool name so tool_result events can carry toolName. */
   toolIdToName: Map<string, string>;
+  /**
+   * Number of user turns that have been written to the subprocess but have
+   * not yet been answered with a `result` event.
+   *
+   * Initialised to `1` when {@link import('./engines/claude/claude-engine.js').ClaudeEngine.prompt}
+   * writes the first user turn. Incremented inside `onUserMessage` before
+   * each subsequent stdin write, decremented on every parsed `result`
+   * event. When the counter reaches `0` and the subprocess was spawned
+   * with `keepStdinOpen: true`, the engine schedules `child.stdin.end()`
+   * on a 2 s grace timer (see {@link stdinGraceTimer}).
+   */
+  outstandingTurns: number;
+  /**
+   * Pending grace timer that will close the subprocess's stdin once the
+   * outstandingTurns counter has stayed at 0 for 2 s. Undefined when no
+   * timer is currently armed; cleared (and the timer cancelled) the
+   * moment the counter rises above 0 again.
+   */
+  stdinGraceTimer?: NodeJS.Timeout;
 }
 
 /**
@@ -188,9 +207,20 @@ export class PromptOptions {
    * after the initial prompt is written. Leaves the channel open so the
    * engine's {@link import('./engine.js').ForjisEngine.onUserMessage}
    * method can append subsequent user turns as newline-delimited
-   * payloads. Used by the inspector-clarify mode. When false or
-   * undefined, the engine closes stdin immediately after the initial
-   * prompt write (legacy one-shot behaviour).
+   * payloads. Set unconditionally for `engine.invoke()` spawns so the
+   * facilitator health-check can deliver soft `[health-check]` nudges.
+   * When false or undefined, the engine closes stdin immediately after
+   * the initial prompt write (legacy one-shot behaviour, used by the
+   * `prompt()`-only call sites).
    */
   keepStdinOpen?: boolean;
+  /**
+   * When true, marks this spawn as the inspector-clarify long-running
+   * subprocess. Enables the diagnostic log lines gated behind
+   * `FORJIS_INSPECTOR_DEBUG=1`. Independent from {@link keepStdinOpen}
+   * because every `engine.invoke()` spawn now keeps stdin open, so the
+   * old `keepStdinOpen === true` heuristic can no longer distinguish
+   * inspector-clarify from a normal pipeline run.
+   */
+  inspectorClarify?: boolean;
 }

@@ -287,6 +287,14 @@ When a test runner supports it, also pass `--forceExit` (or the
 equivalent) so lingering handles cannot keep the process alive past
 test completion.
 
+## Health-Check Nudges
+
+The facilitator may inject a user message starting with `[health-check]` mid-execution when a role's events log has been silent for an unusually long time. When you receive such a message:
+
+1. If you are awaiting a long-running tool call you expect to complete (e.g. `npm test` with a known timeout), reply with one line: `[orchestrator]: <RoleName> is still running <operation> (started <ts>); ignoring nudge` — then continue with the original task.
+2. If you have lost track of what the role was doing or believe it is genuinely stuck, abort that subagent and re-invoke it once with a one-line note about why. Do NOT restart the entire pipeline from scratch.
+3. Never treat a nudge as a fatal signal. The pipeline continues unless the message explicitly says `halt`.
+
 ## No Destructive Side-Effects in Test Commands
 
 Test commands must **assume a clean working tree** and **fail fast** if

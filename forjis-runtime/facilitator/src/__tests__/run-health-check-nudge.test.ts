@@ -1,86 +1,94 @@
 /**
- * Tests for the run command's main loop, health check retry, SIGINT cleanup,
- * and token budget gating.
+ * Tests for the soft-nudge body of `invokeWithHealthCheck` in
+ * `forjis-runtime/facilitator/src/commands/run.ts` (fix-health-check).
  *
- * Exercises the internal runMainLoop and invokeWithHealthCheck code paths
- * indirectly through the exported runCommand entry point, with all external
- * dependencies stubbed via jest.unstable_mockModule.
+ * Behaviour under test:
+ *   - The stuck callback (halt = false) calls `engine.onUserMessage` with
+ *     a payload that begins with `[health-check]` and names the stuck
+ *     role. The orchestrator subprocess pid is NOT killed.
+ *   - The halt callback (halt = true) reads the pid file and kills the
+ *     subprocess via `killProcess`, then the run transitions to failed.
+ *   - When the engine emits a final `result` (modelled by the stub
+ *     resolving normally), `engine.invoke` resolves and the task
+ *     transitions to `done`.
+ *   - `monitor.stop()` is called in the engine's `finally` block.
+ *
+ * The harness is a deep stub of every external module the run module
+ * imports, mirroring the established pattern in
+ * `run-main-loop.test.ts`. The dispatch queue, engine impl, monitor
+ * callback, and pid map are all captured-by-reference closures so
+ * each test can configure them independently.
  */
 
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import type { TaskEvent } from '@forjis/shared';
 
 // ---------------------------------------------------------------------------
-// Shared mock state -- declared before mocks so factory closures can capture
+// Shared mock state — declared before mocks so factory closures can capture
 // ---------------------------------------------------------------------------
 
-/** Tracks engine.invoke calls for assertion. */
+/** Tracks engine.invoke calls. */
 let invokeCallCount = 0;
 
 /** Controls what engine.invoke returns or throws. */
 let invokeImpl: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
-/** Queue of tasks returned by nextDispatchable -- shift one per call. */
+/**
+ * Records every onUserMessage call with `(taskId, text)` so the test can
+ * assert that the nudge text begins with `[health-check]` and names the
+ * stuck role.
+ */
+let onUserMessageLog: Array<{ taskId: string; text: string }>;
+
+/**
+ * Optional stub that lets a single test reject the next onUserMessage
+ * call (subprocess closed). When null, onUserMessage resolves normally
+ * and records the call.
+ */
+let onUserMessageImpl: ((taskId: string, text: string) => Promise<void>) | null;
+
+/** Queue of tasks returned by nextDispatchable — shift one per call. */
 let dispatchQueue: Array<Record<string, unknown> | null>;
 
-/** Tracks transitions recorded by queue.transition. */
+/** Records every queue.transition call. */
 let transitionLog: Array<{ id: string; status: string }>;
 
-/** Tracks killProcess calls. */
+/** Records every killProcess call (we expect zero on the soft-nudge path). */
 let killLog: number[];
 
-/** Controls readPidSync return value per task id. */
+/** Per-task pid map consulted by readPidSync. */
 let pidByTask: Record<string, number | null>;
 
-/** Whether the token budget threshold is exceeded. */
-let budgetExceeded: boolean;
-
-/** Captured SIGINT handler so tests can invoke it. */
+/** Captured SIGINT handler — runs nothing in these tests. */
 let sigintHandler: (() => void) | null = null;
 
 /** Captured process.exit spy. */
 let exitSpy: ReturnType<typeof jest.spyOn>;
 
-/** Spy for console.log to suppress noisy output. */
+/** Spies for console.log / console.error to suppress noisy output. */
 let logSpy: ReturnType<typeof jest.spyOn>;
 let errorSpy: ReturnType<typeof jest.spyOn>;
 
-/** Controls HealthCheckMonitor onStuck callback trigger. */
+/**
+ * Drives the HealthCheckMonitor mock: each test installs a function that
+ * receives the monitor's onStuck callback and may invoke it on its own
+ * schedule (e.g. once with halt=false, once with halt=true).
+ */
 let healthCheckStartImpl: (
   getCurrentRole: () => unknown,
   getStartedAt: () => string,
   onStuck: (roleName: string, retryCount: number, halt: boolean) => void,
 ) => void;
 
-/** Track monitor start/stop calls. */
-let monitorStartCount: number;
+/** Counts monitor.stop calls. */
 let monitorStopCount: number;
 
-/** Track monitor.resetBaseline calls. */
-let monitorResetCount: number;
-
-/** Retry states returned by the monitor. */
-const emptyRetryStates = new Map();
-
-/**
- * Controls what parsePipelinePlan throws (or returns). Replaced per-test to
- * exercise the strict-parser wire-up: when set to throw
- * `PlanRoleNotFoundError`, the statePollTimer inside the run loop should
- * capture it, archive the plan, and bubble the error to `queue.transition('failed')`.
- */
-let parsePlanImpl: () => Promise<unknown>;
-
-/** Tracks archive (pipeline-plan.yaml -> pipeline-plan.failed.yaml) calls. */
-let archivedPaths: Array<{ from: string; to: string }>;
-
-/** Mock configDir value. */
+/** Mock configDir. */
 const mockConfigDir = '/mock/project/.forjis/config';
 
 // ---------------------------------------------------------------------------
-// Module mocks -- must be declared before the dynamic import of run.js
+// Module mocks — must be declared before the dynamic import of run.js
 // ---------------------------------------------------------------------------
 
-/* Mock @forjis/resolver to return a ConfigResult from resolve() */
 jest.unstable_mockModule('@forjis/resolver', () => ({
   resolve: jest.fn().mockResolvedValue({
     generated: ['orgs.yaml', 'tasks.yaml'],
@@ -113,10 +121,13 @@ jest.unstable_mockModule('../engine.js', () => ({
     invoke: jest.fn((opts: Record<string, unknown>) => invokeImpl(opts)),
     cleanup: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
     prompt: jest.fn<() => Promise<string>>().mockResolvedValue(''),
-    // The new health-check soft-nudge path calls engine.onUserMessage on
-    // every stuck (halt=false) callback. The default impl resolves so
-    // tests that don't override it observe the success path.
-    onUserMessage: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    onUserMessage: jest.fn((taskId: string, text: string) => {
+      if (onUserMessageImpl) {
+        return onUserMessageImpl(taskId, text);
+      }
+      onUserMessageLog.push({ taskId, text });
+      return Promise.resolve();
+    }),
   }),
 }));
 
@@ -148,7 +159,6 @@ jest.unstable_mockModule('../display.js', () => ({
   renderStatus: jest.fn().mockReturnValue(''),
 }));
 
-/* TaskQueue mock -- returns tasks from dispatchQueue, logs transitions */
 jest.unstable_mockModule('../task-queue.js', () => ({
   TaskQueue: jest.fn().mockImplementation(() => ({
     scanDirectory: jest.fn().mockResolvedValue([
@@ -163,8 +173,6 @@ jest.unstable_mockModule('../task-queue.js', () => ({
       transitionLog.push({ id, status });
     }),
     listAll: jest.fn(async () => {
-      // If no transitions have been recorded yet, return a pending task
-      // so the early-exit guard in runCommand does not bail out.
       if (transitionLog.length === 0) {
         return [{
           id: 'task-1',
@@ -177,18 +185,7 @@ jest.unstable_mockModule('../task-queue.js', () => ({
           retryCount: 0,
         }];
       }
-      return transitionLog
-        .filter((t) => t.status === 'running')
-        .map((t) => ({
-          id: t.id,
-          status: 'running',
-          priority: 'normal',
-          created: new Date().toISOString(),
-          source: 'cli' as const,
-          dependencies: [],
-          description: 'mock',
-          retryCount: 0,
-        }));
+      return [];
     }),
     checkClarifications: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
     getTasksPath: jest.fn().mockReturnValue(null),
@@ -197,7 +194,6 @@ jest.unstable_mockModule('../task-queue.js', () => ({
   })),
 }));
 
-/* TokenTracker mock */
 jest.unstable_mockModule('../token-tracker.js', () => ({
   TokenTracker: jest.fn().mockImplementation(() => ({
     load: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -205,22 +201,26 @@ jest.unstable_mockModule('../token-tracker.js', () => ({
     getWindowStartedAt: jest.fn().mockReturnValue(new Date()),
     recordUsage: jest.fn(),
     persist: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    isThresholdExceeded: jest.fn(() => budgetExceeded),
-    getUsageRatio: jest.fn().mockReturnValue(0.95),
+    isThresholdExceeded: jest.fn(() => false),
+    getUsageRatio: jest.fn().mockReturnValue(0),
     reset: jest.fn(),
   })),
 }));
 
-/* HealthCheckMonitor mock */
 jest.unstable_mockModule('../health-check.js', () => ({
   HealthCheckMonitor: jest.fn().mockImplementation(() => ({
-    start: jest.fn((getCurrentRole: () => unknown, getStartedAt: () => string, onStuck: (r: string, c: number, h: boolean) => void) => {
-      monitorStartCount++;
-      healthCheckStartImpl(getCurrentRole, getStartedAt, onStuck);
-    }),
+    start: jest.fn(
+      (
+        getCurrentRole: () => unknown,
+        getStartedAt: () => string,
+        onStuck: (r: string, c: number, h: boolean) => void,
+      ) => {
+        healthCheckStartImpl(getCurrentRole, getStartedAt, onStuck);
+      },
+    ),
     stop: jest.fn(() => { monitorStopCount++; }),
-    resetBaseline: jest.fn(() => { monitorResetCount++; }),
-    getAllRetryStates: jest.fn(() => emptyRetryStates),
+    resetBaseline: jest.fn(),
+    getAllRetryStates: jest.fn(() => new Map()),
     getRoleRetryState: jest.fn(),
   })),
 }));
@@ -231,22 +231,6 @@ jest.unstable_mockModule('../process-utils.js', () => ({
   pidFilePath: jest.fn((_dir: string, taskId: string) => `/mock/.forjis/tasks/${taskId}/pid`),
 }));
 
-/**
- * PlanRoleNotFoundError class used by the mock module. Must be a single class
- * declared at module scope so both the mock factory and tests can use the
- * same constructor for `instanceof` checks inside run.ts.
- */
-class MockPlanRoleNotFoundError extends Error {
-  public readonly stepIndex: number;
-  public readonly identity: { org: string; team: string; role: string };
-  constructor(stepIndex: number, identity: { org: string; team: string; role: string }) {
-    super(`Plan step ${stepIndex} references unknown role identity`);
-    this.name = 'PlanRoleNotFoundError';
-    this.stepIndex = stepIndex;
-    this.identity = identity;
-  }
-}
-
 jest.unstable_mockModule('../web-services/plan-writer.js', () => ({
   writePipelinePlan: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
   syncPlanFromState: jest.fn<() => Promise<boolean>>().mockResolvedValue(true),
@@ -254,11 +238,8 @@ jest.unstable_mockModule('../web-services/plan-writer.js', () => ({
   forcePlanReady: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
   getRunningRole: jest.fn().mockResolvedValue(null),
   syncRetryStateToPlan: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-  parsePipelinePlan: jest.fn(() => parsePlanImpl()),
-  // Re-exported error class — the real module surface now includes
-  // PlanRoleNotFoundError for the strict plan parser. Used by the
-  // wire-up test below for `err instanceof PlanRoleNotFoundError`.
-  PlanRoleNotFoundError: MockPlanRoleNotFoundError,
+  parsePipelinePlan: jest.fn<() => Promise<unknown>>().mockResolvedValue(null),
+  PlanRoleNotFoundError: class extends Error {},
 }));
 
 jest.unstable_mockModule('../web-services/event-writer.js', () => ({
@@ -275,9 +256,7 @@ jest.unstable_mockModule('node:fs', () => ({
   readFileSync: jest.fn().mockReturnValue(''),
   unlinkSync: jest.fn(),
   existsSync: jest.fn().mockReturnValue(true),
-  renameSync: jest.fn((from: string, to: string) => {
-    archivedPaths.push({ from, to });
-  }),
+  renameSync: jest.fn(),
 }));
 
 jest.unstable_mockModule('node:module', () => ({
@@ -289,7 +268,7 @@ jest.unstable_mockModule('node:module', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Dynamic import of the module under test (after all mocks are declared)
+// Dynamic import — after every mock has been declared
 // ---------------------------------------------------------------------------
 
 const { runCommand } = await import('../commands/run.js');
@@ -298,7 +277,7 @@ const { runCommand } = await import('../commands/run.js');
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Builds minimal RunOptions for test invocation. */
+/** Builds a minimal RunOptions object. */
 function makeOptions(overrides: Record<string, unknown> = {}) {
   return {
     buildFilePath: '/mock/forjis.yaml',
@@ -315,7 +294,7 @@ function makeOptions(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** Creates a minimal task state object. */
+/** Builds a minimal task state object. */
 function makeTask(id: string) {
   return {
     id,
@@ -329,7 +308,7 @@ function makeTask(id: string) {
   };
 }
 
-/** Default engine result with exit code 0. */
+/** A successful engine result for the given task id. */
 function successResult(taskId: string) {
   return {
     exitCode: 0,
@@ -340,7 +319,7 @@ function successResult(taskId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Test setup / teardown
+// Setup / teardown
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
@@ -349,20 +328,15 @@ beforeEach(() => {
     invokeCallCount++;
     return successResult((opts as { taskId: string }).taskId);
   };
+  onUserMessageLog = [];
+  onUserMessageImpl = null;
   dispatchQueue = [];
   transitionLog = [];
   killLog = [];
   pidByTask = {};
-  budgetExceeded = false;
-  sigintHandler = null;
-  monitorStartCount = 0;
   monitorStopCount = 0;
-  monitorResetCount = 0;
-  archivedPaths = [];
-  // Default: parser is a no-op (valid plan). Tests override to throw.
-  parsePlanImpl = async () => null;
-
   healthCheckStartImpl = () => {};
+  sigintHandler = null;
 
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -388,33 +362,24 @@ afterEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('runMainLoop via runCommand', () => {
-  it('transitions a queued task to running then done on engine success', async () => {
-    dispatchQueue = [makeTask('task-1'), null];
-
-    await runCommand(makeOptions());
-
-    const statuses = transitionLog.filter((t) => t.id === 'task-1').map((t) => t.status);
-    expect(statuses).toEqual(['running', 'done']);
-    expect(invokeCallCount).toBe(1);
-  });
-
-  it('soft-nudges the orchestrator on each stuck event without killing the subprocess (fix-health-check)', async () => {
-    // Pre-fix-health-check this scenario was a kill-and-respawn loop. The
-    // new contract: stuck (halt=false) callbacks DO NOT kill the
-    // subprocess; the health-check just hands the model a `[health-check]`
-    // user turn and lets it decide how to react. The engine continues
-    // running until it emits its `result` event naturally.
-    healthCheckStartImpl = (_getCurrent, _getStarted, onStuck) => {
-      process.nextTick(() => onStuck('developer', 1, false));
-      process.nextTick(() => onStuck('developer', 2, false));
-    };
-
+describe('invokeWithHealthCheck — soft nudge', () => {
+  /**
+   * The stuck callback (halt = false) MUST nudge via engine.onUserMessage
+   * with text starting with `[health-check]` that names the stuck role,
+   * and MUST NOT kill the subprocess. The engine then resolves
+   * naturally, transitioning the task to done.
+   */
+  it('nudges via onUserMessage with [health-check] text and does NOT kill the subprocess', async () => {
     pidByTask['task-1'] = 12345;
+
+    healthCheckStartImpl = (_getCurrent, _getStarted, onStuck) => {
+      // Fire one stuck tick (halt = false) shortly after engine.invoke is called.
+      process.nextTick(() => onStuck('developer', 1, false));
+    };
 
     invokeImpl = async (opts) => {
       invokeCallCount++;
-      // Yield so the stuck callbacks can fire before we resolve.
+      // Yield so the stuck callback can fire before we resolve.
       await new Promise((r) => setTimeout(r, 5));
       return successResult((opts as { taskId: string }).taskId);
     };
@@ -423,28 +388,33 @@ describe('runMainLoop via runCommand', () => {
 
     await runCommand(makeOptions());
 
-    // Stuck path no longer kills — only the halt path does.
-    expect(killLog).toEqual([]);
-    // The engine runs exactly once (no respawn loop).
     expect(invokeCallCount).toBe(1);
+    expect(killLog).toEqual([]);
+    expect(onUserMessageLog).toHaveLength(1);
+    expect(onUserMessageLog[0].taskId).toBe('task-1');
+    expect(onUserMessageLog[0].text.startsWith('[health-check]')).toBe(true);
+    expect(onUserMessageLog[0].text).toContain('"developer"');
 
     const statuses = transitionLog.filter((t) => t.id === 'task-1').map((t) => t.status);
     expect(statuses).toEqual(['running', 'done']);
   });
 
-  it('halt path (max retries exceeded) kills the subprocess and transitions to failed (fix-health-check)', async () => {
-    healthCheckStartImpl = (_getCurrent, _getStarted, onStuck) => {
-      // Skip past the soft-nudge phase straight to halt to keep the test
-      // focused on the surviving kill path.
-      process.nextTick(() => onStuck('developer', 3, true));
-    };
-
+  /**
+   * The halt callback (halt = true) MUST read the pid file and kill the
+   * subprocess via killProcess. The task then transitions to failed.
+   */
+  it('halt callback kills the subprocess via killProcess and transitions task to failed', async () => {
     pidByTask['task-1'] = 99999;
+
+    healthCheckStartImpl = (_getCurrent, _getStarted, onStuck) => {
+      // Fire halt = true once the engine yields.
+      process.nextTick(() => onStuck('reviewer', 3, true));
+    };
 
     invokeImpl = async () => {
       invokeCallCount++;
-      // Yield so the halt callback can run; then reject as the engine
-      // would when its subprocess is killed.
+      // Allow the halt callback to fire, then reject as the engine
+      // would when its subprocess gets killed.
       await new Promise((r) => setTimeout(r, 5));
       throw new Error('Process killed');
     };
@@ -453,78 +423,58 @@ describe('runMainLoop via runCommand', () => {
 
     await runCommand(makeOptions());
 
+    expect(killLog).toContain(99999);
+    expect(onUserMessageLog).toHaveLength(0);
+
     const statuses = transitionLog.filter((t) => t.id === 'task-1').map((t) => t.status);
     expect(statuses).toEqual(['running', 'failed']);
-
-    // Exactly one kill on the halt path (no per-retry kills any more).
-    expect(killLog).toEqual([99999]);
   });
 
-  it('SIGINT triggers cleanupOnExit, killing running tasks and calling process.exit(1)', async () => {
-    let resolveEngine: (v: Record<string, unknown>) => void;
-    const enginePromise = new Promise<Record<string, unknown>>((resolve) => {
-      resolveEngine = resolve;
-    });
+  /**
+   * If onUserMessage rejects (subprocess already closed during the
+   * 2 s grace window), the run loop must NOT kill the subprocess and
+   * the engine's natural resolution path must still take over.
+   */
+  it('swallows onUserMessage failure and lets the engine resolve naturally', async () => {
+    pidByTask['task-1'] = 7777;
 
-    invokeImpl = async () => {
-      invokeCallCount++;
-      return enginePromise;
+    onUserMessageImpl = async () => {
+      throw new Error('stdin closed for task "task-1"');
     };
 
-    pidByTask['task-1'] = 55555;
-    dispatchQueue = [makeTask('task-1'), null];
+    healthCheckStartImpl = (_getCurrent, _getStarted, onStuck) => {
+      process.nextTick(() => onStuck('developer', 1, false));
+    };
 
-    const runPromise = runCommand(makeOptions()).catch(() => {});
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(sigintHandler).not.toBeNull();
-    if (sigintHandler) {
-      await sigintHandler();
-    }
-
-    expect(killLog).toContain(55555);
-    expect(exitSpy).toHaveBeenCalledWith(1);
-
-    resolveEngine!(successResult('task-1'));
-    await runPromise;
-  });
-
-  it('invokeWithHealthCheck resolves with engine result when no stuck event fires', async () => {
-    healthCheckStartImpl = () => {};
-
-    const expectedUsage = { inputTokens: 200, outputTokens: 100 };
     invokeImpl = async (opts) => {
       invokeCallCount++;
-      return {
-        exitCode: 0,
-        taskId: (opts as { taskId: string }).taskId,
-        stage: null,
-        usage: expectedUsage,
-      };
+      await new Promise((r) => setTimeout(r, 5));
+      return successResult((opts as { taskId: string }).taskId);
     };
 
     dispatchQueue = [makeTask('task-1'), null];
 
     await runCommand(makeOptions());
 
+    expect(killLog).toEqual([]);
     expect(invokeCallCount).toBe(1);
-    expect(monitorStopCount).toBeGreaterThanOrEqual(1);
 
     const statuses = transitionLog.filter((t) => t.id === 'task-1').map((t) => t.status);
     expect(statuses).toEqual(['running', 'done']);
+
+    // The error spy should not have observed an unhandled rejection
+    // bubble up from invokeWithHealthCheck.
+    expect(errorSpy.mock.calls.flat().some((arg) =>
+      typeof arg === 'string' && arg.includes('stdin closed'),
+    )).toBe(false);
   });
 
-  it('transitions task to failed and archives the plan when parsePipelinePlan throws PlanRoleNotFoundError (upfront)', async () => {
-    // Parser throws on the upfront synchronous call (before the engine is
-    // ever invoked). This exercises the `catch` branch right after the
-    // initial `await getRunningRole` + `parsePipelinePlan` block.
-    parsePlanImpl = async () => {
-      throw new MockPlanRoleNotFoundError(0, { org: 'acme', team: 'dev', role: 'ghost' });
-    };
-
-    // Engine should not be reached; if it is, return success so the test
-    // failure message is about the wrong transition, not a hang.
+  /**
+   * monitor.stop MUST be invoked in the engine's finally block so the
+   * setInterval timer is released even on the happy path.
+   */
+  it('calls monitor.stop after engine.invoke resolves', async () => {
+    healthCheckStartImpl = () => {};
     invokeImpl = async (opts) => {
       invokeCallCount++;
       return successResult((opts as { taskId: string }).taskId);
@@ -534,16 +484,6 @@ describe('runMainLoop via runCommand', () => {
 
     await runCommand(makeOptions());
 
-    const statuses = transitionLog.filter((t) => t.id === 'task-1').map((t) => t.status);
-    expect(statuses).toEqual(['running', 'failed']);
-
-    // The offending plan was archived before the throw propagated.
-    expect(archivedPaths.length).toBeGreaterThanOrEqual(1);
-    const archived = archivedPaths[0];
-    expect(archived.from).toContain('pipeline-plan.yaml');
-    expect(archived.to).toContain('pipeline-plan.failed.yaml');
-
-    // Engine must not have been invoked (upfront parse bailed early).
-    expect(invokeCallCount).toBe(0);
+    expect(monitorStopCount).toBeGreaterThanOrEqual(1);
   });
 });

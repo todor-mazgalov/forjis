@@ -13,8 +13,20 @@ import type { RoleIdentity } from '@forjis/shared';
 import type { HealthCheckConfig } from './types.js';
 import { readPidFile } from './process-utils.js';
 
-/** Multiplier applied to the check interval to derive the stuck detection threshold. */
-const STUCK_THRESHOLD_MULTIPLIER = 2;
+/**
+ * Multiplier applied to the check interval to derive the stuck detection
+ * threshold.
+ *
+ * With the default `interval = 60 s`, this yields a 600 s (10 min) window —
+ * comfortably exceeding the longest legitimate `npm test` run plus its
+ * surrounding reasoning + scoring window. The previous value of `2` (120 s)
+ * coincided exactly with the `npm test` Bash-tool timeout and tripped on
+ * every legitimate test run, killing the orchestrator subprocess. Now that
+ * stuck roles trigger a non-destructive nudge instead of a kill, a single
+ * threshold sized for the longest legitimate operation is correct for
+ * every role.
+ */
+const STUCK_THRESHOLD_MULTIPLIER = 10;
 
 /** Per-role retry state tracked in memory during task execution. */
 export interface RoleRetryState {

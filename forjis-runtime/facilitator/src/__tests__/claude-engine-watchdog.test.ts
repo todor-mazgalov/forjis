@@ -12,6 +12,15 @@
  * The tests subclass ClaudeEngine and override the `spawnChild` seam so
  * no real `claude` binary is needed. The fake child is a PassThrough-based
  * stub that lets the test drive `data` / `close` events on its schedule.
+ *
+ * Relationship to `fix-health-check`: the engine-level silence watchdog
+ * remains the safety net for genuinely hung subprocesses. The new
+ * `[health-check]` stdin nudge mechanism (see
+ * `run-health-check-nudge.test.ts` and `claude-engine-keepstdin-counter.test.ts`)
+ * is a non-destructive *upstream* signal — it gives the orchestrator a
+ * chance to recover before this watchdog escalates to a forced kill.
+ * If a subprocess is so wedged that it cannot read its own stdin, the
+ * watchdog is what eventually frees the parent process.
  */
 
 import { mkdtemp, rm, mkdir, writeFile, access } from 'node:fs/promises';

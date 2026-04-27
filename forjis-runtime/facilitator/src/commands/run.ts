@@ -912,22 +912,35 @@ async function runMainLoop(
 }
 
 /**
- * Invokes the engine with health check monitoring and automatic retry.
+ * Invokes the engine with health-check monitoring and soft stuck-role nudges.
  *
- * Wraps `engine.invoke()` in a retry loop driven by the HealthCheckMonitor.
- * When a stuck role is detected, the subprocess is killed and the engine
- * is re-invoked. When max retries are exceeded, the task is halted.
+ * The HealthCheckMonitor drives two callback paths:
+ *
+ * 1. **Stuck (halt = false):** the role's events JSONL has been silent for
+ *    longer than `STUCK_THRESHOLD_MULTIPLIER × interval`. Instead of killing
+ *    the orchestrator subprocess, the facilitator injects a `[health-check]`
+ *    user turn via {@link ForjisEngine.onUserMessage}. The orchestrator's
+ *    `forjis-workflow` skill prescribes how the model responds (defer with a
+ *    one-liner, or abort + re-invoke a single subagent). When the injection
+ *    fails (subprocess already closed), monitoring stops and the error is
+ *    swallowed — the engine's natural completion path takes over.
+ * 2. **Halt (halt = true):** the per-role retry counter reached
+ *    `maxRetries`. The facilitator reads the pid file, kills the subprocess
+ *    via {@link killProcess}, stops monitoring, and throws an error
+ *    describing the halted role and retry count. This is the only path that
+ *    still kills.
  *
  * @param engine - The loaded ForjisEngine instance.
- * @param monitor - The HealthCheckMonitor managing retry state.
+ * @param monitor - The HealthCheckMonitor managing per-role retry counters.
  * @param options - The run command options.
  * @param task - The current task state.
  * @param configResult - The resolver config result with configDir.
- * @param maxRetries - Maximum number of health-check retries before halting.
- * @param getCurrentRole - Returns the current team/role or null.
+ * @param maxRetries - Maximum number of nudges before the halt branch fires.
+ * @param getCurrentRole - Returns the current team/role identity or null.
  * @param onEvent - Event callback for the engine.
- * @returns The engine result from a successful invocation.
- * @throws {Error} When the task is halted or engine fails without retry.
+ * @returns The engine result from a clean invocation.
+ * @throws {Error} When the role is halted (max retries exceeded) or the
+ *   engine itself fails.
  */
 async function invokeWithHealthCheck(
   engine: ForjisEngine,
@@ -939,72 +952,90 @@ async function invokeWithHealthCheck(
   getCurrentRole: () => RoleIdentity | null,
   onEvent: (event: import('@forjis/shared').TaskEvent) => void,
 ): Promise<import('../engine.js').EngineResult> {
-  // Loop from attempt 0 up to maxRetries (inclusive) as a backstop.
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    // Fresh local flags for this iteration — no shared mutable state.
-    let engineCompleted = false;
-    let stuckDetected = false;
-    let haltDetected = false;
+  let haltError: Error | null = null;
 
-    const result = await new Promise<import('../engine.js').EngineResult | 'retry'>((resolve, reject) => {
-      monitor.start(
-        getCurrentRole,
-        () => task.started ?? new Date().toISOString(),
-        (roleName, retryCount, halt) => {
-          if (engineCompleted) return;
-
-          const pid = readPidSync(options.projectDir, task.id);
-          if (pid !== null) {
-            killProcess(pid);
-          }
-
-          if (halt) {
-            haltDetected = true;
-            monitor.stop();
-            console.log(`[health-check]: role "${roleName}" halted after ${retryCount} retries`);
-          } else {
-            stuckDetected = true;
-            monitor.stop();
-            console.log(`[health-check]: role "${roleName}" stuck, retry ${retryCount}/${maxRetries}`);
-          }
-        },
-      );
-
-      console.log(`[engine]: invoking claude for task "${task.id}"...`);
-      engine.invoke({
-        projectDir: options.projectDir,
-        taskId: task.id,
-        taskDescription: task.description,
-        configDir: configResult.configDir,
-        dryRun: false,
-        onEvent,
-      }).then((engineResult) => {
-        engineCompleted = true;
-        monitor.stop();
-        resolve(engineResult);
-      }).catch((err) => {
-        if (stuckDetected) {
-          // Engine was interrupted by a stuck detection; signal outer loop to retry.
-          resolve('retry');
-        } else {
-          reject(err);
+  monitor.start(
+    getCurrentRole,
+    () => task.started ?? new Date().toISOString(),
+    async (roleName, retryCount, halt) => {
+      if (halt) {
+        const pid = readPidSync(options.projectDir, task.id);
+        if (pid !== null) {
+          killProcess(pid);
         }
-      });
+        monitor.stop();
+        haltError = new Error(
+          `role "${roleName}" halted after ${retryCount} retries`,
+        );
+        console.log(
+          `[health-check]: role "${roleName}" halted after ${retryCount} retries`,
+        );
+        return;
+      }
+
+      try {
+        if (typeof engine.onUserMessage !== 'function') {
+          // Engine does not support nudge injection — surface but do not kill.
+          console.warn(
+            `[health-check]: engine "${engine.name}" does not support onUserMessage; skipping nudge for role "${roleName}"`,
+          );
+          return;
+        }
+        await engine.onUserMessage(task.id, buildNudge(roleName, retryCount));
+        console.log(
+          `[health-check]: nudged orchestrator about stuck role "${roleName}" (nudge ${retryCount}/${maxRetries})`,
+        );
+      } catch {
+        // Subprocess is already closed (the engine is in cleanup) — stop
+        // monitoring so subsequent ticks don't keep firing.
+        monitor.stop();
+      }
+    },
+  );
+
+  console.log(`[engine]: invoking claude for task "${task.id}"...`);
+
+  try {
+    const result = await engine.invoke({
+      projectDir: options.projectDir,
+      taskId: task.id,
+      taskDescription: task.description,
+      configDir: configResult.configDir,
+      dryRun: false,
+      onEvent,
     });
-
-    if (result !== 'retry') {
-      return result;
+    if (haltError !== null) {
+      throw haltError;
     }
-
-    if (haltDetected) {
-      throw new Error(`[health-check]: task "${task.id}" halted after max retries`);
-    }
-
-    // Prepare monitor baseline for the next iteration.
-    monitor.resetBaseline();
+    return result;
+  } finally {
+    monitor.stop();
   }
+}
 
-  throw new Error(`[health-check]: task "${task.id}" exceeded loop backstop of ${maxRetries} retries`);
+/**
+ * Builds the `[health-check]` user-turn payload injected via
+ * {@link ForjisEngine.onUserMessage} when a role's events JSONL has been
+ * silent past the stuck threshold.
+ *
+ * The text is intentionally directive: the model is asked either to defer
+ * (with a one-line `[orchestrator]: ... ignoring nudge` reply that the
+ * `forjis-workflow` skill prescribes) or to abort and re-invoke the
+ * subagent once. Never treat the nudge as a fatal signal.
+ *
+ * @param roleName - Name of the stuck role from {@link RoleIdentity.role}.
+ * @param retryCount - 1-based nudge count from the monitor.
+ * @returns The user-turn text to write to the orchestrator's stdin.
+ */
+function buildNudge(roleName: string, retryCount: number): string {
+  return (
+    `[health-check] Role "${roleName}" has had no events written for longer ` +
+    `than the configured threshold (nudge ${retryCount}). Either interrupt ` +
+    `that role's current tool call and re-invoke it once with a brief ` +
+    `explanation, or reply with one line stating what it is genuinely ` +
+    `waiting on (e.g. a long test run) so the next health-check tick can ` +
+    `be ignored.`
+  );
 }
 
 /**

@@ -72,6 +72,15 @@ export class ClaudeEngine implements ForjisEngine {
   >();
 
   /**
+   * Per-task {@link InvocationContext} handles keyed by `taskId`.
+   * Populated alongside {@link activeChildren} so {@link onUserMessage}
+   * can mutate the outstanding-turn counter and cancel the stdin grace
+   * timer for the matching subprocess. Cleaned up on the same
+   * `close` / `error` paths that drop the child handle.
+   */
+  private readonly activeContexts = new Map<string, InvocationContext>();
+
+  /**
    * Protected seam used by `prompt()` to spawn the underlying child process.
    *
    * Forwards directly to `child_process.spawn` in production. Exposed as a
@@ -141,6 +150,12 @@ export class ClaudeEngine implements ForjisEngine {
       lineBuffer: '',
       eventLog: [],
       toolIdToName: new Map(),
+      // Initialised to 1 — the first user turn written by `prompt()` is
+      // already in flight by the time spawnClaude() returns. The counter
+      // is decremented to 0 when the corresponding `result` event arrives
+      // (handled in parseOutput), at which point the 2 s grace timer
+      // schedules `child.stdin.end()`.
+      outstandingTurns: 1,
     };
 
     const taskDir = join(options.projectDir, '.forjis', 'tasks', options.taskId);
@@ -242,7 +257,7 @@ export class ClaudeEngine implements ForjisEngine {
       }
       const child = this.spawnChild('claude', args, childOptions);
 
-      const isInspectorClarify = options.id !== undefined && options.keepStdinOpen === true;
+      const isInspectorClarify = options.inspectorClarify === true;
       if (isInspectorClarify) {
         console.log(
           `[engine]: inspector-clarify spawn — arg-count=${args.length}, ` +
@@ -263,6 +278,9 @@ export class ClaudeEngine implements ForjisEngine {
       // subprocess is alive. Keyed by the caller-supplied task id.
       if (options.id) {
         this.activeChildren.set(options.id, child);
+        if (options.ctx) {
+          this.activeContexts.set(options.id, options.ctx);
+        }
       }
 
       if (options.keepStdinOpen) {
@@ -338,6 +356,38 @@ export class ClaudeEngine implements ForjisEngine {
 
       armWatchdog();
 
+      // Grace-timer logic: when the outstanding-turn counter reaches 0
+      // (final `result` event observed inside parseOutput), schedule
+      // `child.stdin.end()` after a 2 s grace window. The window lets a
+      // facilitator-driven nudge that arrives at the same instant as the
+      // last result reach the subprocess before stdin is closed. If a
+      // new turn arrives mid-grace, `onUserMessage` cancels the timer
+      // via the same handle stored on the context.
+      const STDIN_GRACE_MS = 2000;
+      const armStdinGrace = (): void => {
+        if (!options.keepStdinOpen) return;
+        if (!options.ctx) return;
+        if (child.stdin.destroyed || child.stdin.writableEnded) return;
+        if (options.ctx.stdinGraceTimer) {
+          clearTimeout(options.ctx.stdinGraceTimer);
+        }
+        const timer = setTimeout(() => {
+          if (!options.ctx) return;
+          options.ctx.stdinGraceTimer = undefined;
+          if (options.ctx.outstandingTurns > 0) return;
+          if (child.stdin.destroyed || child.stdin.writableEnded) return;
+          try {
+            child.stdin.end();
+          } catch {
+            /* best-effort — child may have closed concurrently */
+          }
+        }, STDIN_GRACE_MS);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+        options.ctx.stdinGraceTimer = timer;
+      };
+
       let chunkCounter = 0;
       child.stdout.on("data", chunk => {
         armWatchdog();
@@ -349,7 +399,15 @@ export class ClaudeEngine implements ForjisEngine {
             `[engine]: inspector-clarify chunk ${chunkCounter} bytes=${raw.length}: ${preview}`,
           );
         }
-        this.parseOutput(chunk, options.onEvent, 'stdout', options.returnOutput ? (text) => { resultText = text; } : undefined, options.ctx, isInspectorClarify);
+        this.parseOutput(
+          chunk,
+          options.onEvent,
+          'stdout',
+          options.returnOutput ? (text) => { resultText = text; } : undefined,
+          options.ctx,
+          isInspectorClarify,
+          armStdinGrace,
+        );
       });
 
       child.stderr.on("data", chunk => {
@@ -366,10 +424,22 @@ export class ClaudeEngine implements ForjisEngine {
         if (tracked === child) {
           this.activeChildren.delete(options.id);
         }
+        const trackedCtx = this.activeContexts.get(options.id);
+        if (options.ctx && trackedCtx === options.ctx) {
+          this.activeContexts.delete(options.id);
+        }
+      };
+
+      const clearStdinGrace = (): void => {
+        if (options.ctx?.stdinGraceTimer) {
+          clearTimeout(options.ctx.stdinGraceTimer);
+          options.ctx.stdinGraceTimer = undefined;
+        }
       };
 
       child.on('error', (err) => {
         clearWatchdog();
+        clearStdinGrace();
         cleanupPidFile();
         deregisterChild();
         if (settled) return;
@@ -380,6 +450,7 @@ export class ClaudeEngine implements ForjisEngine {
 
       child.on('close', (code) => {
         clearWatchdog();
+        clearStdinGrace();
         cleanupPidFile();
         deregisterChild();
         if (settled) return;
@@ -470,12 +541,17 @@ export class ClaudeEngine implements ForjisEngine {
     options.projectDir = projectDir;
     options.onEvent = onEvent;
     options.ctx = ctx;
-    // The clarifier runs interactively: the facilitator injects additional
-    // user turns (clarify answers, guardrail hints) via `onUserMessage`
-    // while the subprocess is still alive. Leaving stdin open is a
-    // prerequisite for that injection.
+    // Stdin stays open for every engine.invoke() spawn so the facilitator
+    // health-check can inject soft `[health-check]` nudges as fresh user
+    // turns while the orchestrator is mid-pipeline. Closure is governed
+    // by the outstandingTurns counter on the InvocationContext: when the
+    // counter reaches 0 (final `result` event observed), parseOutput
+    // schedules `child.stdin.end()` on a 2 s grace timer. inspector-clarify
+    // continues to work because its lifecycle was already designed for
+    // this — it just no longer needs the explicit gate here.
+    options.keepStdinOpen = true;
     if (mode === 'inspector-clarify') {
-      options.keepStdinOpen = true;
+      options.inspectorClarify = true;
     }
     return this.prompt(command, options);
   }
@@ -492,9 +568,13 @@ export class ClaudeEngine implements ForjisEngine {
    * turn; the trailing newline terminates the JSONL record.
    *
    * The subprocess's stdin must have been opened with `keepStdinOpen:
-   * true` at spawn time for this call to succeed; the inspector-clarify
-   * mode sets that flag automatically via
-   * {@link spawnClaude}.
+   * true` at spawn time for this call to succeed; every `engine.invoke()`
+   * spawn sets that flag automatically via {@link spawnClaude}.
+   *
+   * Side-effects on {@link InvocationContext}: increments
+   * `outstandingTurns` immediately before the stdin write and cancels
+   * any pending stdin grace timer so a turn that arrives during the
+   * 2 s grace window stays attached to a live stdin.
    *
    * @param taskId - Identifier matching the live subprocess's invocation id.
    * @param text - Payload appended as a new user turn.
@@ -517,6 +597,17 @@ export class ClaudeEngine implements ForjisEngine {
         `stdin closed for task "${taskId}"`,
       );
     }
+    const ctx = this.activeContexts.get(taskId);
+    if (ctx) {
+      // Bump the counter before the write so a `result` event that
+      // arrives concurrently cannot drop the counter to 0 ahead of this
+      // increment and prematurely arm the grace timer.
+      ctx.outstandingTurns += 1;
+      if (ctx.stdinGraceTimer) {
+        clearTimeout(ctx.stdinGraceTimer);
+        ctx.stdinGraceTimer = undefined;
+      }
+    }
     child.stdin.write(encodeStreamJsonUserTurn(text));
   }
 
@@ -527,6 +618,12 @@ export class ClaudeEngine implements ForjisEngine {
    * and forwards formatted events to the onEvent callback. Stamps each
    * event with the originating process stream.
    *
+   * Decrements `ctx.outstandingTurns` on every parsed `result` event.
+   * When the counter reaches `0` and a context is present, fires
+   * {@link onAllTurnsComplete} so the caller (currently
+   * {@link prompt}) can arm the 2 s grace timer that closes the
+   * subprocess's stdin.
+   *
    * @param chunk - Raw output chunk from stdout/stderr.
    * @param onEvent - Optional callback for formatted events.
    * @param stream - Which process stream produced this chunk.
@@ -535,6 +632,9 @@ export class ClaudeEngine implements ForjisEngine {
    * @param inspectorClarify - True when the current subprocess is the
    *   inspector-clarify runner; enables the per-event debug log gated
    *   behind `FORJIS_INSPECTOR_DEBUG=1`.
+   * @param onAllTurnsComplete - Called when a `result` event drops
+   *   `ctx.outstandingTurns` to `0`. The caller is responsible for
+   *   arming the 2 s stdin grace timer.
    * @returns The raw output string.
    */
   private parseOutput(
@@ -544,6 +644,7 @@ export class ClaudeEngine implements ForjisEngine {
     onResult?: (text: string) => void,
     ctx?: InvocationContext,
     inspectorClarify = false,
+    onAllTurnsComplete?: () => void,
   ) {
     const output = chunk.toString("utf-8");
 
@@ -582,8 +683,16 @@ export class ClaudeEngine implements ForjisEngine {
           }
         }
 
-        if (event.type === 'result' && onResult) {
-          onResult(event.result);
+        if (event.type === 'result') {
+          if (onResult) {
+            onResult(event.result);
+          }
+          if (ctx) {
+            ctx.outstandingTurns = Math.max(0, ctx.outstandingTurns - 1);
+            if (ctx.outstandingTurns === 0 && onAllTurnsComplete) {
+              onAllTurnsComplete();
+            }
+          }
         }
 
         if (onEvent) {
